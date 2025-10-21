@@ -1,0 +1,17 @@
+max_width = 9999
+chain_width = 40
+trailing_comma = "Always"
+
+brace_style = "PreferSameLine" # https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=#brace_style
+
+fn_single_line = true # https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=#fn_single_line
+
+imports_layout = "Vertical" # https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=#imports_layout
+
+imports_granularity = "One" # https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=#imports_granularity
+
+group_imports = "One" # https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=#group_imports
+
+single_line_if_else_max_width = 100 # https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=#single_line_if_else_max_width
+
+wrap_comments = false # https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=#wrap_comments
