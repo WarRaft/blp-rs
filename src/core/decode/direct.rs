@@ -12,7 +12,7 @@ impl ImageBlp {
     ///
     /// - `mip_visible[i] == false` → skip decoding for that mipmap (image stays `None`).
     /// - If `mip_visible` has no entry for index `i`, we treat it as `true`.
-    pub(crate) fn decode_direct(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
+    pub fn decode_direct(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
         // --- Read palette ---
         // Palette is located at `self.header_offset` with expected length = 256 * 4.
         if self.header_offset + self.header_length > buf.len() {

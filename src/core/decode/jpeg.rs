@@ -10,7 +10,7 @@ impl ImageBlp {
     /// - For each mip, concatenates `[header][tail]` → full JPEG, then decodes it.
     /// - Respects `mip_visible`: if `mip_visible[i] == false`, the mip is skipped (image stays `None`).
     ///   Missing indices in `mip_visible` are treated as `true`.
-    pub(crate) fn decode_jpeg(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
+    pub fn decode_jpeg(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
         // --- Validate header range and slice it out ---
         let h_off = self.header_offset;
         let h_len = self.header_length;

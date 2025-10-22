@@ -10,7 +10,7 @@ impl ImageBlp {
     /// 3) Generate mip chain, honoring `mip_visible` flags:
     ///    - If `mip_visible[i] == false` → we do NOT materialize pixels for mip i (image stays `None`).
     ///    - Missing indices in `mip_visible` are treated as `true`.
-    pub(crate) fn decode_image(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
+    pub fn decode_image(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
         // --- Decode source into RGBA8 ---
         let src = image::load_from_memory(buf)
             .map_err(|e| BlpError::new("image.decode").with_arg("msg", e.to_string()))?
