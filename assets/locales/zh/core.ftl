@@ -63,6 +63,9 @@ error-io-open-file = 打开文件失败: { $path } ({ $msg })
 error-image-load = 图像解码失败。
 error-image-empty = 图像尺寸无效 (宽度={ $width }, 高度={ $height })
 
+error-psd-parse = 解析 PSD 文件失败: { $error }
+error-psd-invalid-dimensions = PSD 尺寸无效 (宽度={ $width }, 高度={ $height })
+
 error-clipboard-init-failed = 无法访问剪贴板。
 error-clipboard-no-image = 剪贴板中未找到图像。
 error-clipboard-invalid-buffer = 剪贴板图像缓冲区无效 (宽度={ $width }, 高度={ $height })。

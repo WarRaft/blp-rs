@@ -63,6 +63,9 @@ error-io-open-file = 開啟檔案失敗: { $path } ({ $msg })
 error-image-load = 影像解碼失敗。
 error-image-empty = 影像尺寸無效 (寬度={ $width }, 高度={ $height })
 
+error-psd-parse = 解析 PSD 檔案失敗: { $error }
+error-psd-invalid-dimensions = PSD 尺寸無效 (寬度={ $width }, 高度={ $height })
+
 error-clipboard-init-failed = 無法存取剪貼簿。
 error-clipboard-no-image = 剪貼簿中未找到影像。
 error-clipboard-invalid-buffer = 剪貼簿影像緩衝區無效 (寬度={ $width }, 高度={ $height })。

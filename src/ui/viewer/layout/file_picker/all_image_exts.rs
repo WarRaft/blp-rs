@@ -9,21 +9,14 @@ pub(in crate::ui::viewer) fn all_image_exts() -> &'static [&'static str] {
         .get_or_init(|| {
             let mut set: BTreeSet<&'static str> = BTreeSet::new();
 
-            // Все форматы, известные crate `image` (зависят от включённых фич)
             for fmt in ImageFormat::all() {
                 for &ext in fmt.extensions_str() {
                     set.insert(ext);
                 }
             }
 
-            // Плюс наши кастомные
             set.insert("blp");
-
-            // Если хочешь явно добавить редкие, которые у тебя точно поддержаны, раскомментируй:
-            // set.insert("dds");
-            // set.insert("tga");
-            // set.insert("qoi");
-            // set.insert("avif");
+            set.insert("psd");
 
             set.into_iter().collect::<Vec<_>>()
         })

@@ -2,6 +2,48 @@ use crate::core::image::ImageBlp;
 use crate::error::error::BlpError;
 use image::imageops::{FilterType, crop_imm, resize};
 use image::{self};
+use psd::Psd;
+
+/// Checks if buffer is a PSD file by signature
+fn is_psd_file(buf: &[u8]) -> bool {
+    // PSD files start with "8BPS" signature
+    buf.len() >= 4 && &buf[0..4] == b"8BPS"
+}
+
+/// Loads PSD file and converts it to DynamicImage
+/// 
+/// Extracts from PSD file:
+/// - Composite (final) image in RGBA format
+/// - Image dimensions (width and height)
+/// - Automatically processes all layers, effects, and blend modes
+/// 
+/// Note: The psd library provides a ready "flattened" image,
+/// which is the result of compositing all visible layers taking into account
+/// their blend modes, transparency, and other effects.
+fn load_psd_as_image(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
+    let psd = Psd::from_bytes(buf).map_err(|e| {
+        BlpError::new("error-psd-parse").with_arg("error", e.to_string())
+    })?;
+    
+    // Get composite RGBA image (result of all layers)
+    let rgba_data = psd.rgba();
+    let width = psd.width();
+    let height = psd.height();
+    
+    // Additional PSD info (for debugging if needed)
+    #[cfg(debug_assertions)]
+    {
+        eprintln!("PSD Info: {}x{}, {} bytes of RGBA data", width, height, rgba_data.len());
+    }
+    
+    // Create ImageBuffer from RGBA data
+    let img_buf = image::ImageBuffer::from_raw(width, height, rgba_data)
+        .ok_or_else(|| BlpError::new("error-psd-invalid-dimensions")
+            .with_arg("width", width)
+            .with_arg("height", height))?;
+    
+    Ok(image::DynamicImage::ImageRgba8(img_buf))
+}
 
 impl ImageBlp {
     /// External image path:
@@ -12,18 +54,23 @@ impl ImageBlp {
     ///    - Missing indices in `mip_visible` are treated as `true`.
     pub fn decode_image(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
         // --- Decode source into RGBA8 ---
-        let src = image::load_from_memory(buf)
-            .map_err(|e| BlpError::new("image.decode").with_arg("msg", e.to_string()))?
-            .to_rgba8();
+        let src = if is_psd_file(buf) {
+            load_psd_as_image(buf)?
+        } else {
+            image::load_from_memory(buf)
+                .map_err(|_| BlpError::new("error-image-load"))?
+        };
+        
+        let src = src.to_rgba8();
 
         // Target size (at least 1×1).
         let (tw, th) = (self.width.max(1), self.height.max(1));
         let (sw, sh) = src.dimensions();
 
         if sw == 0 || sh == 0 {
-            return Err(BlpError::new("image.zero_dims")
-                .with_arg("w", sw)
-                .with_arg("h", sh));
+            return Err(BlpError::new("error-image-empty")
+                .with_arg("width", sw)
+                .with_arg("height", sh));
         }
 
         // --- (1) cover-scale: choose the larger scale so the image covers the target area ---

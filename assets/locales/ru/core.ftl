@@ -65,6 +65,9 @@ error-io-open-file = Не удалось открыть файл: { $path } ({ $
 error-image-load = Не удалось декодировать изображение.
 error-image-empty = Некорректный размер изображения (ширина={ $width }, высота={ $height })
 
+error-psd-parse = Не удалось разобрать PSD файл: { $error }
+error-psd-invalid-dimensions = Некорректные размеры PSD (ширина={ $width }, высота={ $height })
+
 error-clipboard-init-failed = Не удалось получить доступ к буферу обмена.
 error-clipboard-no-image = В буфере обмена нет изображения.
 error-clipboard-invalid-buffer = Некорректный буфер изображения (ширина={ $width }, высота={ $height }).

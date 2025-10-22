@@ -65,6 +65,9 @@ error-io-open-file = Failed to open file: { $path } ({ $msg })
 error-image-load = Failed to decode image.
 error-image-empty = Image has invalid size (width={ $width }, height={ $height })
 
+error-psd-parse = Failed to parse PSD file: { $error }
+error-psd-invalid-dimensions = Invalid PSD dimensions (width={ $width }, height={ $height })
+
 error-clipboard-init-failed = Failed to access clipboard.
 error-clipboard-no-image = No image found in clipboard.
 error-clipboard-invalid-buffer = Invalid clipboard image buffer (width={ $width }, height={ $height }).
