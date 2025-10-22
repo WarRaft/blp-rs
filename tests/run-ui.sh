@@ -7,6 +7,7 @@ PROJECT_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 DEFAULT_INPUT="${PROJECT_ROOT}/test-data/scan/BLP1_tt1_c0_ab8_at0_m0_512x128/CenterPanel01.blp"
 DEFAULT_INPUT="/Users/nazarpunk/Downloads/_blp/bb.blp"
 DEFAULT_INPUT="/Users/nazarpunk/Downloads/_blp/logo.png"
+DEFAULT_INPUT="/Users/nazarpunk/Downloads/PSD/272322-44206a78482d715ddf3deea761094c7d.psd"
 
 cd "${PROJECT_ROOT}"
 
