@@ -145,17 +145,14 @@ impl ImageBlp {
     }
 }
 
-/// Decode any supported image format to RGBA pixels.
+/// Decode any supported image format to RGBA image.
 ///
-/// For BLP files: returns pixels from the first mipmap level.
+/// For BLP files: returns the first mipmap level.
 /// For other formats (PNG, JPG, PSD, etc.): decodes the full image.
 ///
 /// # Returns
 ///
-/// `(width, height, rgba_pixels)` where:
-/// - `width: u32` - image width in pixels
-/// - `height: u32` - image height in pixels  
-/// - `rgba_pixels: Vec<u8>` - RGBA data, 4 bytes per pixel
+/// `DynamicImage` - decoded image that can be converted to RGBA8 or other formats
 ///
 /// # Examples
 ///
@@ -163,10 +160,11 @@ impl ImageBlp {
 /// use blp::core::decode::decode_to_rgba;
 ///
 /// let file_data = std::fs::read("image.png").unwrap();
-/// let (width, height, rgba) = decode_to_rgba(&file_data).unwrap();
-/// println!("Image: {}x{}, {} bytes", width, height, rgba.len());
+/// let img = decode_to_rgba(&file_data).unwrap();
+/// let rgba = img.to_rgba8();
+/// println!("Image: {}x{}", img.width(), img.height());
 /// ```
-pub fn decode_to_rgba(buf: &[u8]) -> Result<(u32, u32, Vec<u8>), BlpError> {
+pub fn decode_to_rgba(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
     // Check if it's a BLP file
     if is_blp_file(buf) {
         // Decode BLP and get first mipmap
@@ -177,19 +175,12 @@ pub fn decode_to_rgba(buf: &[u8]) -> Result<(u32, u32, Vec<u8>), BlpError> {
 
         // Get first mipmap
         if let Some(img) = blp.mipmaps[0].image.take() {
-            let (w, h) = img.dimensions();
-            let pixels = img.into_raw();
-            Ok((w, h, pixels))
+            Ok(image::DynamicImage::ImageRgba8(img))
         } else {
             Err(BlpError::new("error-blp-no-mipmap"))
         }
     } else {
         // Decode as regular image (PNG, JPG, PSD, etc.)
-        let src = decode_image_common(buf)?;
-        let rgba = src.to_rgba8();
-        let (w, h) = rgba.dimensions();
-        let pixels = rgba.into_raw();
-
-        Ok((w, h, pixels))
+        decode_image_common(buf)
     }
 }
