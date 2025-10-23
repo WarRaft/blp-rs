@@ -5,6 +5,12 @@ use crate::error::error::BlpError;
 pub const MAX_MIPS: usize = 16;
 pub const HEADER_SIZE: u64 = 156;
 
+/// Checks if buffer is a BLP file by signature
+fn is_blp_file(buf: &[u8]) -> bool {
+    // BLP files start with "BLP1" or "BLP2" signature (or just "BLP" prefix)
+    buf.len() >= 3 && &buf[..3] == b"BLP"
+}
+
 #[derive(Debug, Default)]
 pub struct ImageBlp {
     #[allow(dead_code)]
@@ -29,7 +35,7 @@ pub struct ImageBlp {
 
 impl ImageBlp {
     pub fn from_buf(buf: &[u8]) -> Result<Self, BlpError> {
-        if buf.len() >= 3 && &buf[..3] == b"BLP" {
+        if is_blp_file(buf) {
             Self::from_buf_blp(buf)
         } else {
             Self::from_buf_image(buf)
