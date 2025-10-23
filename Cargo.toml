@@ -2,7 +2,7 @@
 name = "blp"
 description = "Blizzard BLP image format reader/writer (Warcraft/World of Warcraft textures)"
 authors = ["nazarpunk <nazarpunk@gmail.com>"]
-version = "0.1.34"
+version = "0.1.35"
 repository = "https://github.com/WarRaft/blp-rs"
 edition = "2024"
 license = "MIT"
