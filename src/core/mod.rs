@@ -4,4 +4,4 @@ pub mod types;
 mod from;
 pub mod decode;
 mod encode;
-pub(crate) mod export;
+mod export;
