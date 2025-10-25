@@ -9,7 +9,7 @@ https://t.me/neuralforum/7333097
 # Logo
 
 ```
-/i Telegram sticker design: a pirate skull in a tattered tricorn hat gives two thumbs up, framed by cracked ship wheels and frayed ropes. A single bold inscription "BLP" is integrated into the artwork on a torn blood-stained banner. White skull with deep shadows, cracked bone, worn teeth; glowing hollow eyes with faint smoke rising. Subtle accents: crimson red (banner stains), muted cyan (rope), steel blue (wheel), metallic gold (tooth, hat trim). Dark, gritty, high-contrast shading, cursed pirate vibe. Black background with thick white outline, classic sticker style. Ominous and iconic.
+/i -s Telegram sticker design: the bold text "BLP-RS" dominates the center on a torn, blood-stained banner, carved like cracked metal glowing faintly from within. Behind it, a fierce pirate skull with both thumbs up in a tattered tricorn hat, framed by cracked ship wheels and frayed ropes. White skull with deep shadows, broken teeth, and glowing eyes with smoke. Accents: crimson red, muted cyan, steel blue, metallic gold. Dark, high-contrast Warcraft-style shading, cursed pirate energy. Black background with thick white outline, iconic sticker look.
 ```
 
 # Bg

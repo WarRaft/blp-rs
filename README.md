@@ -133,5 +133,5 @@ It is **not required** to translate every key: any missing strings will automati
 
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/WarRaft/blp/refs/heads/main/preview/logo.png" alt="BLP"/>
+  <img src="https://raw.githubusercontent.com/WarRaft/blp-rs/refs/heads/main/preview/logo.png" alt="BLP"/>
 </p>
