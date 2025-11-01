@@ -88,6 +88,31 @@ fn pick_pow2_cover(w0: u32, h0: u32) -> (u32, u32) {
     if let Some((_s, _ard, _area, ww, hh)) = best { (ww, hh) } else { (w0, h0) }
 }
 
+/// Create mipmaps for the given base dimensions.
+/// first_image: Some(image) for the first mipmap if available, None otherwise.
+fn create_mipmaps(base_w: u32, base_h: u32, first_image: Option<image::RgbaImage>) -> Vec<Mipmap> {
+    // How many levels to 1×1 inclusive:
+    // floor(log2(max)) + 1  ==  32 - leading_zeros(max)  (for u32)
+    let levels = (32 - base_w.max(base_h).leading_zeros()) as usize;
+
+    let mut mipmaps = Vec::with_capacity(MAX_MIPS);
+    let (mut w, mut h) = (base_w, base_h);
+
+    for i in 0..MAX_MIPS {
+        if i < levels {
+            mipmaps.push(Mipmap { width: w, height: h, image: if i == 0 { first_image.clone() } else { None }, offset: 0, length: 0 });
+            // halve, but not below 1
+            w = (w / 2).max(1);
+            h = (h / 2).max(1);
+        } else {
+            // tail — missing levels
+            mipmaps.push(Mipmap::default());
+        }
+    }
+
+    mipmaps
+}
+
 impl ImageBlp {
     /// Lightweight path for "arbitrary image": layout only without RGBA.
     /// Supports both regular image formats (via image library),
@@ -119,30 +144,34 @@ impl ImageBlp {
 
         let (base_w, base_h) = pick_pow2_cover(w0, h0);
 
-        // How many levels to 1×1 inclusive:
-        // floor(log2(max)) + 1  ==  32 - leading_zeros(max)  (for u32)
-        let levels = (32 - base_w.max(base_h).leading_zeros()) as usize;
+        let mipmaps = create_mipmaps(base_w, base_h, None);
 
-        let mut mipmaps = Vec::with_capacity(MAX_MIPS);
-        let (mut w, mut h) = (base_w, base_h);
+        Ok(ImageBlp { width: base_w, height: base_h, mipmaps, source: SourceKind::Image, ..Default::default() })
+    }
 
-        for i in 0..MAX_MIPS {
-            if i < levels {
-                mipmaps.push(Mipmap {
-                    width: w,
-                    height: h,
-                    image: None, // Do NOT create RgbaImage
-                    offset: 0,
-                    length: 0,
-                });
-                // halve, but not below 1
-                w = (w / 2).max(1);
-                h = (h / 2).max(1);
-            } else {
-                // tail — missing levels
-                mipmaps.push(Mipmap::default());
-            }
+    /// Create BLP from raw RGBA buffer.
+    /// Buffer must be in RGBA format (4 bytes per pixel).
+    /// Width and height must match the buffer size.
+    pub fn from_rgba_impl(rgba_buf: &[u8], width: u32, height: u32) -> Result<Self, BlpError> {
+        if width == 0 || height == 0 {
+            return Err(BlpError::new("error-image-empty")
+                .with_arg("width", width)
+                .with_arg("height", height));
         }
+
+        let expected_size = (width * height * 4) as usize;
+        if rgba_buf.len() != expected_size {
+            return Err(BlpError::new("error-rgba-buffer-size")
+                .with_arg("expected", expected_size)
+                .with_arg("actual", rgba_buf.len()));
+        }
+
+        // Create RgbaImage from buffer
+        let rgba_image = image::RgbaImage::from_raw(width, height, rgba_buf.to_vec()).ok_or_else(|| BlpError::new("error-rgba-image-creation"))?;
+
+        let (base_w, base_h) = pick_pow2_cover(width, height);
+
+        let mipmaps = create_mipmaps(base_w, base_h, Some(rgba_image));
 
         Ok(ImageBlp { width: base_w, height: base_h, mipmaps, source: SourceKind::Image, ..Default::default() })
     }

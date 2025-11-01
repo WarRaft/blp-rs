@@ -42,6 +42,13 @@ impl ImageBlp {
         }
     }
 
+    /// Create BLP from raw RGBA buffer.
+    /// Buffer must be in RGBA format (4 bytes per pixel).
+    /// Width and height must match the buffer size.
+    pub fn from_rgba(rgba_buf: &[u8], width: u32, height: u32) -> Result<Self, BlpError> {
+        Self::from_rgba_impl(rgba_buf, width, height)
+    }
+
     /// Top-level decode entry.
     ///
     /// `mip_visible[i] == false` → skip decoding for mip `i`.
