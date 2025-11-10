@@ -1,4 +1,4 @@
-use crate::error::args::ArgVal;
+use crate::error::args::Arg;
 use crate::error::cause::Cause;
 use num_enum::TryFromPrimitiveError;
 use std::{collections::BTreeMap, fmt, io, sync::Arc};
@@ -6,7 +6,7 @@ use std::{collections::BTreeMap, fmt, io, sync::Arc};
 #[derive(Debug, Clone)]
 pub struct BlpError {
     pub key: &'static str,
-    pub args: BTreeMap<&'static str, ArgVal>,
+    pub args: BTreeMap<&'static str, Arg>,
     pub causes: Vec<Cause>,
 }
 
@@ -27,13 +27,13 @@ impl BlpError {
     }
 
     #[inline]
-    pub fn with_arg(mut self, name: &'static str, val: impl Into<ArgVal>) -> Self {
+    pub fn with_arg(mut self, name: &'static str, val: impl Into<Arg>) -> Self {
         self.args.insert(name, val.into());
         self
     }
 
     #[inline]
-    pub fn with_args(mut self, args: impl IntoIterator<Item = (&'static str, ArgVal)>) -> Self {
+    pub fn with_args(mut self, args: impl IntoIterator<Item = (&'static str, Arg)>) -> Self {
         for (k, v) in args {
             self.args.insert(k, v);
         }

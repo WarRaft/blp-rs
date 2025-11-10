@@ -4,8 +4,8 @@ mod scan_header {
     use std::path::Path;
     use walkdir::WalkDir;
 
-    use blp::core::image::ImageBlp;
-    use blp::core::types::TextureType;
+    use blp::blp_image::BlpImage;
+    use blp::types::TextureType;
 
     const DEST_DIR: &str = "/Users/nazarpunk/IdeaProjects/War3.mpq/extract";
     const OUT_DIR: &str = "test-data/scan";
@@ -52,7 +52,7 @@ mod scan_header {
                 Ok(d) => d,
                 Err(_) => continue,
             };
-            let img = match ImageBlp::from_buf(&data) {
+            let img = match BlpImage::from_buf(&data) {
                 Ok(x) => x,
                 Err(_) => continue,
             };
@@ -124,7 +124,7 @@ mod scan_header {
                 }
             };
 
-            let mut img = match ImageBlp::from_buf(&data) {
+            let mut img = match BlpImage::from_buf(&data) {
                 Ok(x) => x,
                 Err(e) => {
                     eprintln!("❌ Failed to parse {}: {e}", path.display());
@@ -253,7 +253,7 @@ mod scan_header {
             };
 
             let decode_start = Instant::now();
-            let result = ImageBlp::from_buf(&data);
+            let result = BlpImage::from_buf(&data);
             let decode_time = decode_start.elapsed().as_secs_f64();
 
             match result {

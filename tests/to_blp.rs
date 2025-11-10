@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 pub mod to_blp {
-    use blp::core::image::ImageBlp;
+    use blp::blp_image::BlpImage;
     use blp::error::error::BlpError;
     use std::fs;
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -22,7 +22,7 @@ pub mod to_blp {
 
         // --- PNG -> ImageBlp (разметка + декодирование) ---
         let png_bytes = fs::read(&a_png)?;
-        let mut img = ImageBlp::from_buf(&png_bytes)?;
+        let mut img = BlpImage::from_buf(&png_bytes)?;
         img.decode(&png_bytes, &[])?;
 
         // --- encode BLP ---

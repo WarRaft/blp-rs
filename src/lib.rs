@@ -1,8 +1,11 @@
-#[cfg(feature = "cli")]
-mod cli;
-pub mod core;
+pub mod blp_image;
+pub mod decode;
+mod encode;
 pub mod error;
-mod ext;
-pub mod run;
-#[cfg(feature = "ui")]
-pub mod ui;
+mod export;
+mod from;
+pub mod mipmap;
+pub mod types;
+
+pub use blp_image::BlpImage;
+pub use error::error::BlpError;
