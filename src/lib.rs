@@ -6,9 +6,11 @@ mod _export;
 mod _from;
 pub mod _mipmap;
 pub mod _types;
-pub mod blp_image_decoder;
+mod blp_image_decoder;
+mod blp_image_encoder;
 
 pub use crate::blp_image_decoder::BlpImageDecoder;
+pub use crate::blp_image_encoder::BlpImageEncoder;
 
 // Core types
 pub use _blp_image::BlpImage;

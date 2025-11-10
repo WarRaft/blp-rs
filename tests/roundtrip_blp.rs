@@ -2,7 +2,7 @@ use std::fs;
 use std::io::BufWriter;
 use std::path::PathBuf;
 
-use blp::blp_image_decoder::{BlpImageDecoder, BlpImageEncoder};
+use blp::{BlpImageDecoder, BlpImageEncoder};
 use image::ImageDecoder;
 use image::ImageEncoder;
 

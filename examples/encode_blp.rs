@@ -1,4 +1,4 @@
-use blp::blp_image_decoder::BlpImageEncoder;
+use blp::BlpImageEncoder;
 use image::ExtendedColorType;
 use image::ImageEncoder;
 use image::ImageReader;
