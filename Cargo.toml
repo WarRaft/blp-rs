@@ -2,7 +2,7 @@
 name = "blp"
 description = "Blizzard BLP image format reader/writer (Warcraft/World of Warcraft textures)"
 authors = ["nazarpunk <nazarpunk@gmail.com>"]
-version = "0.1.37"
+version = "1.0.0"
 repository = "https://github.com/WarRaft/blp-rs"
 edition = "2024"
 license = "MIT"
@@ -17,8 +17,6 @@ exclude = [
 
 [dependencies]
 byteorder = "1.5.0"
-directories = { version = "6.0.0", optional = true }
-dunce = { version = "1.0.5" }
 hex = "0.4.3"
 image = { version = "0.25.8", features = [
     "avif", # AVIF format support (modern codec based on AV1)
@@ -41,12 +39,9 @@ image = { version = "0.25.8", features = [
 ] }
 
 jpeg-decoder = "0.3.2"
-normpath = "1.4.0"
 psd = "0.3.3"
 num_enum = "0.7.4"
-path-absolutize = "3.1.1"
-serde = { version = "1.0.228", features = ["derive"], optional = true }
-sha1 = "0.11.0-rc.2"
+sha1 = "0.11.0-rc.3"
 turbojpeg = "1.3.3"
 walkdir = "2.5.0"
-chrono = "0.4.42"
+
