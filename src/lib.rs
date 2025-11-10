@@ -1,4 +1,5 @@
 pub mod blp_image;
+pub mod blp_image_ext;
 pub mod decode;
 mod encode;
 pub mod error;

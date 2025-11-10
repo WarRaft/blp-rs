@@ -13,7 +13,46 @@ Wanna know how BLP works? Dive into the spec:
 
 # Command Line Interface
 
-The `blp` tool can be built in two configurations:
+Lightweight Rust library and tools for reading and writing Blizzard BLP textures.
+
+Quick usage
+----------
+
+Decode a `.blp` into PNG using the included example:
+
+```sh
+cargo run --example decode_blp -- path/to/input.blp out.png
+```
+
+Encode a PNG (or any format supported by the `image` crate) into BLP:
+
+```sh
+cargo run --example encode_blp -- in.png out.blp
+```
+
+API
+---
+
+This crate exposes a small `image`-style extension in `src/blp_image_ext.rs`.
+You can use the examples as reference. Minimal API:
+
+- `blp::blp_image_ext::BlpImageDecoder::new(&[u8])` - create decoder
+  - `dimensions()` → `(width, height)`
+  - `read_image(&mut [u8])` → fills RGBA8 raw pixels (consumes decoder)
+
+- `blp::blp_image_ext::BlpImageEncoder::new(writer)` - create encoder
+  - `write_image(buf, width, height, ExtendedColorType)` → writes BLP bytes to writer (consumes encoder)
+
+Notes
+-----
+
+- The examples show how to use the decoder/encoder with `image` crate helpers.
+- The `image` crate does not support runtime registration of formats in this version; the examples instantiate the decoder/encoder directly.
+
+License
+-------
+
+MIT
 
 - **CLI-only** (`--features "cli"`)
 - **UI+CLI** (`--features "cli ui"`) – the CLI plus a native GUI viewer

@@ -24,4 +24,3 @@ build/build-info.txt
 #.idea/
 /.idea/
 /test-data/**/*
-/bin/
