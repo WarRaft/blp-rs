@@ -166,12 +166,26 @@ impl BlpImage {
                 .with_arg("actual", rgba_buf.len()));
         }
 
+
         // Create RgbaImage from buffer
         let rgba_image = image::RgbaImage::from_raw(width, height, rgba_buf.to_vec()).ok_or_else(|| BlpError::new("error-rgba-image-creation"))?;
 
         let (base_w, base_h) = pick_pow2_cover(width, height);
 
-        let mipmaps = create_mipmaps(base_w, base_h, Some(rgba_image));
+        // If the chosen power-of-two cover differs from the source dimensions,
+        // rescale the provided image to match the base mip size so later
+        // encoder checks (which expect the first mip image to match base size)
+        // don't fail with size_mismatch. Use a high-quality filter for scaling.
+        let first_image = if base_w != width || base_h != height {
+            // Convert to DynamicImage and resize, then convert back to RgbaImage
+            let dyn_img = image::DynamicImage::ImageRgba8(rgba_image);
+            let resized = image::imageops::resize(&dyn_img, base_w, base_h, image::imageops::FilterType::Lanczos3);
+            Some(resized)
+        } else {
+            Some(rgba_image)
+        };
+
+        let mipmaps = create_mipmaps(base_w, base_h, first_image);
 
         Ok(BlpImage { width: base_w, height: base_h, mipmaps, source: SourceKind::Image, ..Default::default() })
     }
