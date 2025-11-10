@@ -1,5 +1,5 @@
-use crate::encode::utils::read_be_u16::read_be_u16;
-use crate::error::error::BlpError;
+use crate::_encode::utils::read_be_u16::read_be_u16;
+use crate::_error::error::BlpError;
 
 /// Принимает JPEG-заголовок от SOI до SOS (включительно) и
 /// возвращает минимальный заголовок: SOI + [без APPn/COM] + первый SOF + SOS.

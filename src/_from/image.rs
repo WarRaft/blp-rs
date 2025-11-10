@@ -1,7 +1,7 @@
-use crate::blp_image::{BlpImage, MAX_MIPS};
-use crate::mipmap::Mipmap;
-use crate::types::SourceKind;
-use crate::error::error::BlpError;
+use crate::_blp_image::{BlpImage, MAX_MIPS};
+use crate::_mipmap::Mipmap;
+use crate::_types::SourceKind;
+use crate::_error::error::BlpError;
 use image;
 use psd::Psd;
 
@@ -48,7 +48,7 @@ fn pow2_list_up_to(max_v: u32) -> Vec<u32> {
 ///   2) minimum difference in aspect ratio |(W*/H*) - (w0/h0)|
 ///   3) minimum area W* * H*
 /// Returns (W*, H*).
-fn pick_pow2_cover(w0: u32, h0: u32) -> (u32, u32) {
+pub(crate) fn pick_pow2_cover(w0: u32, h0: u32) -> (u32, u32) {
     debug_assert!(w0 > 0 && h0 > 0);
     let ws = pow2_list_up_to(MAX_POW2);
     let hs = pow2_list_up_to(MAX_POW2);
@@ -90,7 +90,7 @@ fn pick_pow2_cover(w0: u32, h0: u32) -> (u32, u32) {
 
 /// Create mipmaps for the given base dimensions.
 /// first_image: Some(image) for the first mipmap if available, None otherwise.
-fn create_mipmaps(base_w: u32, base_h: u32, first_image: Option<image::RgbaImage>) -> Vec<Mipmap> {
+pub(crate) fn create_mipmaps(base_w: u32, base_h: u32, first_image: Option<image::RgbaImage>) -> Vec<Mipmap> {
     // How many levels to 1×1 inclusive:
     // floor(log2(max)) + 1  ==  32 - leading_zeros(max)  (for u32)
     let levels = (32 - base_w.max(base_h).leading_zeros()) as usize;
@@ -142,11 +142,12 @@ impl BlpImage {
                 .with_arg("height", h0));
         }
 
-        let (base_w, base_h) = pick_pow2_cover(w0, h0);
+    // Keep original image size when creating BlpImage from an arbitrary
+    // image buffer — we don't rescale on open. Rescaling only happens
+    // during conversion to BLP inside the encoder.
+    let mipmaps = create_mipmaps(w0, h0, None);
 
-        let mipmaps = create_mipmaps(base_w, base_h, None);
-
-        Ok(BlpImage { width: base_w, height: base_h, mipmaps, source: SourceKind::Image, ..Default::default() })
+    Ok(BlpImage { width: w0, height: h0, mipmaps, source: SourceKind::Image, ..Default::default() })
     }
 
     /// Create BLP from raw RGBA buffer.
@@ -170,23 +171,10 @@ impl BlpImage {
         // Create RgbaImage from buffer
         let rgba_image = image::RgbaImage::from_raw(width, height, rgba_buf.to_vec()).ok_or_else(|| BlpError::new("error-rgba-image-creation"))?;
 
-        let (base_w, base_h) = pick_pow2_cover(width, height);
+        // Keep original size and attach the provided image as the first mip.
+        let first_image = Some(rgba_image.clone());
+        let mipmaps = create_mipmaps(width, height, first_image);
 
-        // If the chosen power-of-two cover differs from the source dimensions,
-        // rescale the provided image to match the base mip size so later
-        // encoder checks (which expect the first mip image to match base size)
-        // don't fail with size_mismatch. Use a high-quality filter for scaling.
-        let first_image = if base_w != width || base_h != height {
-            // Convert to DynamicImage and resize, then convert back to RgbaImage
-            let dyn_img = image::DynamicImage::ImageRgba8(rgba_image);
-            let resized = image::imageops::resize(&dyn_img, base_w, base_h, image::imageops::FilterType::Lanczos3);
-            Some(resized)
-        } else {
-            Some(rgba_image)
-        };
-
-        let mipmaps = create_mipmaps(base_w, base_h, first_image);
-
-        Ok(BlpImage { width: base_w, height: base_h, mipmaps, source: SourceKind::Image, ..Default::default() })
+        Ok(BlpImage { width, height, mipmaps, source: SourceKind::Image, ..Default::default() })
     }
 }

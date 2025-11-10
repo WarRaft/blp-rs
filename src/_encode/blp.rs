@@ -1,9 +1,9 @@
-use crate::encode::utils::pack_rgba_to_cmyk_fast::pack_rgba_to_cmyk_fast;
-use crate::encode::utils::pack_rgba_to_rgb_fast::pack_rgba_to_rgb_fast;
-use crate::encode::utils::read_be_u16::read_be_u16;
-use crate::encode::utils::rebuild_minimal_jpeg_header::rebuild_minimal_jpeg_header;
-use crate::blp_image::{BlpImage, MAX_MIPS};
-use crate::error::error::BlpError;
+use crate::_encode::utils::pack_rgba_to_cmyk_fast::pack_rgba_to_cmyk_fast;
+use crate::_encode::utils::pack_rgba_to_rgb_fast::pack_rgba_to_rgb_fast;
+use crate::_encode::utils::read_be_u16::read_be_u16;
+use crate::_encode::utils::rebuild_minimal_jpeg_header::rebuild_minimal_jpeg_header;
+use crate::_blp_image::{BlpImage, MAX_MIPS};
+use crate::_error::error::BlpError;
 use std::ffi::CStr;
 use turbojpeg::{libc, raw};
 
@@ -29,12 +29,12 @@ impl BlpImage {
         use std::{ptr, time::Instant};
 
         // --- рабочая структура (заимствуем, без клонов) ---
-        struct WorkMip<'a> {
+        struct WorkMip {
             w: u32,
             h: u32,
             vis: bool,
-            img: Option<&'a RgbaImage>, // &RgbaImage, не clone
-            encoded: Vec<u8>,           // полный JPEG (sanitized header + scan + EOI)
+            img: Option<RgbaImage>, // own image so we can resample if needed
+            encoded: Vec<u8>,       // полный JPEG (sanitized header + scan + EOI)
             encode_ms: f64,
         }
 
@@ -61,24 +61,56 @@ impl BlpImage {
                     .get(i)
                     .copied()
                     .unwrap_or(true),
-                img: m.image.as_ref(), // Option<&RgbaImage>
+                img: m.image.clone(), // clone owned image if present
                 encoded: Vec::new(),
                 encode_ms: 0.0,
             });
         }
 
+        // If source is an arbitrary image (not a pre-built BLP), compute the
+        // power-of-two cover now and resample only for encoding, leaving the
+        // stored BlpImage unchanged.
+        if let crate::_types::SourceKind::Image = self.source {
+            use crate::_from::image::{pick_pow2_cover, create_mipmaps};
+            use image::imageops::FilterType;
+
+            let (base_w, base_h) = pick_pow2_cover(self.width, self.height);
+            let base_mips = create_mipmaps(base_w, base_h, None);
+
+            // Apply the expected widths/heights from the power-of-two chain to work
+            for (idx, wm) in work.iter_mut().enumerate() {
+                if idx < base_mips.len() {
+                    wm.w = base_mips[idx].width;
+                    wm.h = base_mips[idx].height;
+                }
+            }
+
+            // Ensure the base image is present and resampled to base size if needed
+            if let Some(base_img) = work[0].img.take() {
+                if base_img.width() != base_w || base_img.height() != base_h {
+                    let dyn_img = image::DynamicImage::ImageRgba8(base_img);
+                    let resized = image::imageops::resize(&dyn_img, base_w, base_h, FilterType::Lanczos3);
+                    work[0].img = Some(resized);
+                } else {
+                    // put it back unchanged
+                    work[0].img = Some(base_img);
+                }
+            }
+        }
+
         // 2) базовый мип и альфа
-        let base_img = work[0]
+        let base_img_ref = work[0]
             .img
+            .as_ref()
             .ok_or_else(|| BlpError::new("first_visible_slot_missing_src"))?;
-        if base_img.width() != work[0].w || base_img.height() != work[0].h {
+        if base_img_ref.width() != work[0].w || base_img_ref.height() != work[0].h {
             return Err(BlpError::new("mip.size_mismatch")
                 .with_arg("want_w", work[0].w)
                 .with_arg("want_h", work[0].h)
-                .with_arg("got_w", base_img.width())
-                .with_arg("got_h", base_img.height()));
+                .with_arg("got_w", base_img_ref.width())
+                .with_arg("got_h", base_img_ref.height()));
         }
-        let has_alpha = base_img.pixels().any(|p| p.0[3] != 255);
+        let has_alpha = base_img_ref.pixels().any(|p| p.0[3] != 255);
 
         let t0 = Instant::now();
 
@@ -89,7 +121,7 @@ impl BlpImage {
                 wm.encode_ms = 0.0;
                 continue;
             }
-            let rgba = wm.img.unwrap();
+            let rgba = wm.img.as_ref().unwrap();
             let wz = rgba.width() as usize;
             let hz = rgba.height() as usize;
 

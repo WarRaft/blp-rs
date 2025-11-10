@@ -3,8 +3,8 @@
 
 #[cfg(test)]
 pub mod to_blp {
-    use blp::blp_image::BlpImage;
-    use blp::error::error::BlpError;
+    use blp::_blp_image::BlpImage;
+    use blp::_error::error::BlpError;
     use std::fs;
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::path::{Path, PathBuf};

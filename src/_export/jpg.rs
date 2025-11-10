@@ -1,7 +1,7 @@
-use crate::blp_image::BlpImage;
-use crate::mipmap::Mipmap;
-use crate::types::TextureType;
-use crate::error::error::BlpError;
+use crate::_blp_image::BlpImage;
+use crate::_mipmap::Mipmap;
+use crate::_types::TextureType;
+use crate::_error::error::BlpError;
 use std::fs;
 use std::path::Path;
 

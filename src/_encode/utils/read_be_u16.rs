@@ -1,4 +1,4 @@
-use crate::error::error::BlpError;
+use crate::_error::error::BlpError;
 
 /// Преобразует два байта в значение u16 в big-endian.
 /// Возвращает ошибку, если данных меньше 2.

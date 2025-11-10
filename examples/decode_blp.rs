@@ -1,4 +1,4 @@
-use blp::blp_image_ext::BlpImageDecoder;
+use blp::blp_image_decoder::BlpImageDecoder;
 use image::{ImageDecoder, RgbaImage};
 use std::{env, fs::read, path::Path};
 

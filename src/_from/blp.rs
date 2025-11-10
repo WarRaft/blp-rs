@@ -1,7 +1,7 @@
-use crate::blp_image::{HEADER_SIZE, BlpImage, MAX_MIPS};
-use crate::mipmap::Mipmap;
-use crate::types::{SourceKind, TextureType, Version};
-use crate::error::error::BlpError;
+use crate::_blp_image::{HEADER_SIZE, BlpImage, MAX_MIPS};
+use crate::_mipmap::Mipmap;
+use crate::_types::{SourceKind, TextureType, Version};
+use crate::_error::error::BlpError;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 

@@ -1,6 +1,6 @@
-use crate::blp_image::BlpImage;
-use crate::mipmap::Mipmap;
-use crate::error::error::BlpError;
+use crate::_blp_image::BlpImage;
+use crate::_mipmap::Mipmap;
+use crate::_error::error::BlpError;
 use image::DynamicImage;
 use std::fs;
 use std::path::Path;

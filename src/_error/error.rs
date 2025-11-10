@@ -1,5 +1,5 @@
-use crate::error::args::Arg;
-use crate::error::cause::Cause;
+use crate::_error::args::Arg;
+use crate::_error::cause::Cause;
 use num_enum::TryFromPrimitiveError;
 use std::{collections::BTreeMap, fmt, io, sync::Arc};
 
