@@ -1,6 +1,6 @@
 use crate::_error::error::BlpError;
 use crate::_mipmap::Mipmap;
-use crate::_types::{SourceKind, TextureType, Version};
+use crate::_types::{TextureType, Version};
 
 pub const MAX_MIPS: usize = 16;
 pub const HEADER_SIZE: u64 = 156;
@@ -29,8 +29,6 @@ pub struct BlpImage {
     pub holes: usize,
     pub header_offset: usize,
     pub header_length: usize,
-    //
-    pub source: SourceKind,
 }
 
 /// Lightweight metadata for a mip level (no pixel materialization)
@@ -62,7 +60,8 @@ pub struct BlpMeta {
 
 impl BlpImage {
     pub fn from_buf(buf: &[u8]) -> Result<Self, BlpError> {
-        if is_blp_file(buf) { Self::from_buf_blp(buf) } else { Self::from_buf_image(buf) }
+        // Only BLP buffers are supported by the core BlpImage constructor now.
+        if is_blp_file(buf) { Self::from_buf_blp(buf) } else { Err(BlpError::new("error-not-blp")) }
     }
 
     /// Create BLP from raw RGBA buffer.
@@ -77,12 +76,10 @@ impl BlpImage {
     /// `mip_visible[i] == false` → skip decoding for mip `i`.
     /// Missing indices are treated as `true`.
     pub fn decode(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
-        match self.source {
-            SourceKind::Blp => match self.texture_type {
-                TextureType::DIRECT => self.decode_direct(buf, mip_visible),
-                TextureType::JPEG => self.decode_jpeg(buf, mip_visible),
-            },
-            SourceKind::Image => self.decode_image(buf, mip_visible),
+        // Decode BLP payloads according to texture type.
+        match self.texture_type {
+            TextureType::DIRECT => self.decode_direct(buf, mip_visible),
+            TextureType::JPEG => self.decode_jpeg(buf, mip_visible),
         }
     }
 
@@ -98,22 +95,7 @@ impl BlpImage {
             mipinfos.push(MipInfo { index: i, width: m.width, height: m.height, offset: m.offset, length: m.length });
         }
 
-        Ok(BlpMeta {
-            version: img.version,
-            texture_type: img.texture_type,
-            compression: img.compression,
-            alpha_bits: img.alpha_bits,
-            alpha_type: img.alpha_type,
-            has_mips: img.has_mips,
-            width: img.width,
-            height: img.height,
-            extra: img.extra,
-            has_mipmaps: img.has_mipmaps,
-            mipmaps: mipinfos,
-            holes: img.holes,
-            header_offset: img.header_offset,
-            header_length: img.header_length,
-        })
+        Ok(BlpMeta { version: img.version, texture_type: img.texture_type, compression: img.compression, alpha_bits: img.alpha_bits, alpha_type: img.alpha_type, has_mips: img.has_mips, width: img.width, height: img.height, extra: img.extra, has_mipmaps: img.has_mipmaps, mipmaps: mipinfos, holes: img.holes, header_offset: img.header_offset, header_length: img.header_length })
     }
 
     /// Return a slice pointing at the shared JPEG header (for JPEG texture type).
@@ -132,12 +114,18 @@ impl BlpImage {
     /// that was concatenated to the shared header). For DIRECT textures returns
     /// the raw payload for the mip (palette + pixels depending on format).
     pub fn mip_raw<'a>(&self, buf: &'a [u8], mip_index: usize) -> Option<&'a [u8]> {
-        if mip_index >= self.mipmaps.len() { return None; }
+        if mip_index >= self.mipmaps.len() {
+            return None;
+        }
         let m = &self.mipmaps[mip_index];
-        if m.length == 0 { return None; }
+        if m.length == 0 {
+            return None;
+        }
         let off = m.offset;
         let len = m.length;
-        if off.checked_add(len).is_none() || off + len > buf.len() { return None; }
+        if off.checked_add(len).is_none() || off + len > buf.len() {
+            return None;
+        }
         Some(&buf[off..off + len])
     }
 

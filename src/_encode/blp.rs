@@ -67,36 +67,9 @@ impl BlpImage {
             });
         }
 
-        // If source is an arbitrary image (not a pre-built BLP), compute the
-        // power-of-two cover now and resample only for encoding, leaving the
-        // stored BlpImage unchanged.
-        if let crate::_types::SourceKind::Image = self.source {
-            use crate::_from::image::{pick_pow2_cover, create_mipmaps};
-            use image::imageops::FilterType;
-
-            let (base_w, base_h) = pick_pow2_cover(self.width, self.height);
-            let base_mips = create_mipmaps(base_w, base_h, None);
-
-            // Apply the expected widths/heights from the power-of-two chain to work
-            for (idx, wm) in work.iter_mut().enumerate() {
-                if idx < base_mips.len() {
-                    wm.w = base_mips[idx].width;
-                    wm.h = base_mips[idx].height;
-                }
-            }
-
-            // Ensure the base image is present and resampled to base size if needed
-            if let Some(base_img) = work[0].img.take() {
-                if base_img.width() != base_w || base_img.height() != base_h {
-                    let dyn_img = image::DynamicImage::ImageRgba8(base_img);
-                    let resized = image::imageops::resize(&dyn_img, base_w, base_h, FilterType::Lanczos3);
-                    work[0].img = Some(resized);
-                } else {
-                    // put it back unchanged
-                    work[0].img = Some(base_img);
-                }
-            }
-        }
+        // Note: we no longer support arbitrary-image sources in the encoder
+        // path; BlpImage is assumed to represent a BLP source. Resampling for
+        // arbitrary images should happen outside of this crate before encoding.
 
         // 2) базовый мип и альфа
         let base_img_ref = work[0]

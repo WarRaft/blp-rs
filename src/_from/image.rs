@@ -1,6 +1,5 @@
 use crate::_blp_image::{BlpImage, MAX_MIPS};
 use crate::_mipmap::Mipmap;
-use crate::_types::SourceKind;
 use crate::_error::error::BlpError;
 use image;
 use psd::Psd;
@@ -147,7 +146,7 @@ impl BlpImage {
     // during conversion to BLP inside the encoder.
     let mipmaps = create_mipmaps(w0, h0, None);
 
-    Ok(BlpImage { width: w0, height: h0, mipmaps, source: SourceKind::Image, ..Default::default() })
+    Ok(BlpImage { width: w0, height: h0, mipmaps, ..Default::default() })
     }
 
     /// Create BLP from raw RGBA buffer.
@@ -175,6 +174,6 @@ impl BlpImage {
         let first_image = Some(rgba_image.clone());
         let mipmaps = create_mipmaps(width, height, first_image);
 
-        Ok(BlpImage { width, height, mipmaps, source: SourceKind::Image, ..Default::default() })
+    Ok(BlpImage { width, height, mipmaps, ..Default::default() })
     }
 }

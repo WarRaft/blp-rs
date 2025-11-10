@@ -56,7 +56,7 @@ pub fn encode_with_options(img: &BlpImage, opts: &EncodeOptions) -> Result<crate
         }
     }
 
-    // Delegate to the existing method which handles resampling for SourceKind::Image
+    // Delegate to the existing method (BlpImage encoder assumes BLP inputs).
     let ctx = img.encode_blp(opts.quality, &mip_visible)?;
     Ok(ctx)
 }
