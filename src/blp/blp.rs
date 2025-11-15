@@ -260,6 +260,13 @@ pub fn inspect_buf(buf: &[u8]) -> Result<BlpMeta, BlpError> {
     Ok(BlpMeta { version: h.version, texture_type: h.texture_type, compression: h.compression, alpha_bits: h.alpha_bits, alpha_type: h.alpha_type, has_mips: h.has_mips, width: h.width, height: h.height, extra: h.extra, has_mipmaps: h.has_mipmaps, mipmaps: mipinfos, holes: h.holes, header_offset: h.header.offset, header_length: h.header.length })
 }
 
+/// Inspect image bytes and return its declared pixel dimensions without full materialization.
+/// This was previously in `src/_from::parse_image`.
+pub fn inspect_image_dimensions(buf: &[u8]) -> Result<(u32, u32), BlpError> {
+    let h = parse_header(buf)?;
+    Ok((h.width, h.height))
+}
+
 /// For DIRECT (paletted) textures, return the palette bytes if present.
 /// Palette layout: sequence of 256 RGBA entries (1024 bytes) starting at header_offset.
 pub fn palette_bytes<'a>(buf: &'a [u8]) -> Option<&'a [u8]> {
@@ -273,6 +280,24 @@ pub fn palette_bytes<'a>(buf: &'a [u8]) -> Option<&'a [u8]> {
         }
     }
     None
+}
+
+/// For BLP files return all mipmaps as owned `RgbaImage`s.
+/// This function was previously `src::_from::open_mipmaps`.
+pub fn open_mipmaps(buf: &[u8]) -> Result<Vec<image::RgbaImage>, BlpError> {
+    let img = parse_header(buf)?;
+    let mip_visible = &[true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+    let decoded = match img.texture_type {
+        crate::blp::TextureType::JPEG => crate::blp::decode::decode_jpeg_to_mipmaps(&img, buf, mip_visible)?,
+        crate::blp::TextureType::PALETTE => crate::blp::decode::decode_direct_to_mipmaps(&img, buf, mip_visible)?,
+    };
+    let mut out = Vec::new();
+    for opt in decoded.into_iter().take(crate::blp::MAX_MIPS) {
+        if let Some(rgba) = opt {
+            out.push(rgba);
+        }
+    }
+    Ok(out)
 }
 
 /// Encode an RGBA raw buffer into BLP bytes with given quality
@@ -300,7 +325,7 @@ impl Blp {
     /// top-level helper `decode_image_to_mipmaps` which was moved into this `impl`.
     pub fn decode_image(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
         // --- Decode source into RGBA8 ---
-        let src = crate::_from::decode_to_rgba(buf)?;
+        let src = crate::any_image::decode_to_rgba(buf)?;
         let src = src.to_rgba8();
 
         // Target size (at least 1×1).

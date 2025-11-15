@@ -49,7 +49,7 @@ impl Jpg {
                         Err(BlpError::new("jpeg.reencode-frame-not-found"))
                     }
                 } else {
-                    let dynimg = crate::_from::decode_to_rgba(buf)?;
+                    let dynimg = crate::any_image::decode_to_rgba(buf)?;
                     let img = dynimg.to_rgba8();
                     let mut out = Vec::new();
                     let rgb = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();

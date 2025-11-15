@@ -3,6 +3,7 @@ pub mod blp;
 pub use blp::{Blp, Frame, TextureType, Version, MAX_MIPS};
 
 pub use blp::{parse_header, from_rgba, shared_jpeg_header, mip_raw};
+pub use blp::{inspect_image_dimensions, open_mipmaps};
 pub use blp::{encode_rgba_to_blp};
 pub mod encode;
 pub use encode::{Ctx, Mip};

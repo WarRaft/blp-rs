@@ -1,8 +1,8 @@
 // `src/_decode` removed — functions have been moved into `src/_from` and `Blp`.
-// Keep compatibility via `crate::_from::decode_to_rgba` and `Blp::decode_image`.
+// Keep compatibility via `crate::any_image::decode_to_rgba` and `Blp::decode_image`.
 // Encoders moved to `crate::blp`.
 // legacy _export module removed - exporters moved into `crate::blp::export` canonical module
-mod _from;
+// legacy compatibility module removed — use `crate::any_image` or `crate::blp` helpers instead
 pub mod error;
 // legacy module _mipmap removed during API migration
 pub mod any_image;
@@ -23,11 +23,11 @@ pub use image;
 pub use image::{DynamicImage, RgbaImage};
 
 // from/* helpers re-exported at crate root
-pub use crate::_from::inspect_image_dimensions;
+pub use crate::blp::inspect_image_dimensions;
 // Canonical loader
-pub use crate::_from::open_mipmaps;
+pub use crate::blp::open_mipmaps;
 // Re-export legacy helper for convenience
-pub use crate::_from::decode_to_rgba;
+pub use crate::any_image::decode_to_rgba;
 // High-level AnyImage wrapper
 pub use crate::any_image::AnyImage;
 pub use crate::any_image::AnyImageData;

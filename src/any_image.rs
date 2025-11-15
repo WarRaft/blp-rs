@@ -1,10 +1,10 @@
 use crate::blp::{self, Blp, Frame};
-use crate::error::error::BlpError;
 use crate::format_detector::FormatDetector;
 use crate::gif::Gif;
 use crate::psd::PsdImage;
 use image::GenericImageView;
 use image::{DynamicImage, RgbaImage};
+use crate::error::error::BlpError;
 
 /// AnyImage is a convenience wrapper that accepts an in-memory buffer of
 /// unknown image format and exposes a small, user-friendly API.
@@ -96,7 +96,7 @@ impl AnyImage {
     /// Decode and return the first frame as DynamicImage.
     pub fn into_dynamic(self) -> Result<DynamicImage, BlpError> {
         match self.data {
-            AnyImageData::Blp(_) => crate::_from::open(&self.buf),
+            AnyImageData::Blp(_) => crate::any_image::open(&self.buf),
             AnyImageData::Gif(_) => {
                 // GIF: return the first decoded frame as DynamicImage
                 let frames = crate::gif::Gif::decode_frames(&self.buf)?;
@@ -106,8 +106,8 @@ impl AnyImage {
                     Err(BlpError::new("error-gif-no-frame"))
                 }
             }
-            AnyImageData::Psd(_) => crate::_from::open(&self.buf),
-            AnyImageData::Image => crate::_from::open(&self.buf),
+            AnyImageData::Psd(_) => crate::any_image::open(&self.buf),
+            AnyImageData::Image => crate::any_image::open(&self.buf),
         }
     }
 
@@ -117,7 +117,7 @@ impl AnyImage {
     /// Decode and return all frames as RgbaImage (for multi-frame or mipmaps).
     pub fn decode_frames(&self) -> Result<Vec<RgbaImage>, BlpError> {
         match &self.data {
-            AnyImageData::Blp(_) => crate::_from::open_mipmaps(&self.buf),
+            AnyImageData::Blp(_) => crate::blp::open_mipmaps(&self.buf),
             AnyImageData::Gif(_) => crate::gif::Gif::decode_frames(&self.buf),
             AnyImageData::Psd(_) | AnyImageData::Image => {
                 let img = image::load_from_memory(&self.buf)?.to_rgba8();
@@ -187,3 +187,30 @@ impl AnyImage {
         }
     }
 }
+
+/// Decode any supported buffer into a `DynamicImage`.
+/// Mirrors previous `src/_from::decode_to_rgba` and `open`.
+pub fn decode_to_rgba(buf: &[u8]) -> Result<DynamicImage, BlpError> {
+    // BLP detection first
+    if crate::blp::Blp::detect(buf) {
+        let blp = crate::blp::parse_header(buf)?;
+        let decoded = match blp.texture_type {
+            crate::blp::TextureType::JPEG => crate::blp::decode::decode_jpeg_to_mipmaps(&blp, buf, &[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false])?,
+            crate::blp::TextureType::PALETTE => crate::blp::decode::decode_direct_to_mipmaps(&blp, buf, &[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false])?,
+        };
+        if let Some(Some(img)) = decoded.into_iter().next() {
+            return Ok(DynamicImage::ImageRgba8(img));
+        }
+        return Err(BlpError::new("error-blp-no-mipmap"));
+    }
+
+    // PSD special-case
+    if crate::psd::PsdImage::detect(buf) {
+        return crate::psd::PsdImage::decode_as_dynamic(buf);
+    }
+
+    image::load_from_memory(buf).map_err(|_| BlpError::new("error-image-load"))
+}
+
+/// Alias to `decode_to_rgba` for compatibility with previous `open` name.
+pub fn open(buf: &[u8]) -> Result<DynamicImage, BlpError> { decode_to_rgba(buf) }
