@@ -1,21 +1,30 @@
-use crate::_blp_image::{BlpImage, MipInfo};
-use crate::_blp_image::{BlpMeta, MAX_MIPS};
 use crate::_error::error::BlpError;
+use crate::blp::{self, Blp, Frame};
+use image::GenericImageView;
 use image::{DynamicImage, RgbaImage};
-use psd::Psd;
 
 /// AnyImage is a convenience wrapper that accepts an in-memory buffer of
 /// unknown image format and exposes a small, user-friendly API.
 ///
 /// Supported inputs: BLP (preferred detection), standard formats supported
 /// by the `image` crate (PNG, JPEG, GIF, ...), and PSD (via `psd` crate).
-#[derive(Debug)]
-pub enum AnyImage {
-    /// BLP image: contains parsed `BlpImage` and the original bytes (needed to
-    /// decode mip tails on demand).
-    Blp { img: BlpImage, buf: Vec<u8> },
-    /// Regular image loaded via `image::load_from_memory` or PSD converted to DynamicImage.
-    Image(DynamicImage),
+#[derive(Debug, Clone)]
+pub struct AnyImage {
+    /// Type-specific data (BLP headers, GIF frames metadata, PSD dims, etc.)
+    pub data: AnyImageData,
+    /// Original buffer given to the loader
+    pub buf: Vec<u8>,
+    /// Every image has frames (metainfo). For single-frame images this contains one entry.
+    pub frames: Vec<Frame>,
+}
+
+/// Type-specific inner data for `AnyImage`.
+#[derive(Debug, Clone)]
+pub enum AnyImageData {
+    Blp(Blp),                // header-only BLP representation
+    Gif,                     // GIF is multi-frame — frames moved to `AnyImage::frames`
+    Psd,                     // PSD is single-frame — dims available in frames[0]
+    Image,                   // regular single-frame image — frames[0] contains dims
 }
 
 impl AnyImage {
@@ -23,25 +32,29 @@ impl AnyImage {
     /// BLP signature is checked first to avoid double-parsing; then `image` is tried,
     /// then PSD as a last fallback.
     pub fn from_buffer(buf: &[u8]) -> Result<Self, BlpError> {
-        // Quick BLP signature check (fast, avoids parsing non-BLP with image crate)
-        if buf.len() >= 3 && &buf[0..3] == b"BLP" {
-            let img = BlpImage::from_buf(buf)?;
-            return Ok(AnyImage::Blp { img, buf: buf.to_vec() });
+        // BLP detection
+            if buf.len() >= 3 && &buf[0..3] == b"BLP" {
+            let blp_hdr = blp::parse_header(buf)?;
+            return Ok(AnyImage { data: AnyImageData::Blp(blp_hdr.clone()), buf: buf.to_vec(), frames: blp_hdr.frames.clone() });
         }
 
-        // Try image crate for common formats
-        if let Ok(dynimg) = image::load_from_memory(buf) {
-            return Ok(AnyImage::Image(dynimg));
+        // GIF detection (multi-frame)
+        if buf.len() >= 6 && (&buf[0..6] == b"GIF89a" || &buf[0..6] == b"GIF87a") {
+            let gif_meta = crate::gif::Gif::parse_header(buf)?;
+            return Ok(AnyImage { data: AnyImageData::Gif, buf: buf.to_vec(), frames: gif_meta.frames });
         }
 
-        // PSD fallback (signature 8BPS)
+        // PSD detection (single frame)
         if buf.len() >= 4 && &buf[0..4] == b"8BPS" {
-            let psd = Psd::from_bytes(buf).map_err(|e| BlpError::new("psd-parse").with_arg("error", e.to_string()))?;
-            let rgba = psd.rgba();
-            let w = psd.width();
-            let h = psd.height();
-            let imgbuf = RgbaImage::from_raw(w, h, rgba).ok_or_else(|| BlpError::new("psd-invalid-dimensions"))?;
-            return Ok(AnyImage::Image(DynamicImage::ImageRgba8(imgbuf)));
+            let psd_meta = crate::psd::PsdImage::parse_header(buf)?;
+            return Ok(AnyImage { data: AnyImageData::Psd, buf: buf.to_vec(), frames: psd_meta.frames });
+        }
+
+        // Other image formats (single frame)
+        if let Ok(dynimg) = image::load_from_memory(buf) {
+            let (w, h) = dynimg.dimensions();
+            let frame = Frame { width: w, height: h, offset: 0, length: buf.len() };
+            return Ok(AnyImage { data: AnyImageData::Image, buf: buf.to_vec(), frames: vec![frame] });
         }
 
         Err(BlpError::new("unsupported-format"))
@@ -49,112 +62,110 @@ impl AnyImage {
 
     /// Return the image width in pixels.
     pub fn width(&self) -> u32 {
-        match self {
-            AnyImage::Blp { img, .. } => img.width,
-            AnyImage::Image(d) => d.width(),
+        match &self.data {
+            AnyImageData::Blp(b) => b.width,
+            _ => self.frames.get(0).map(|f| f.width).unwrap_or(0),
         }
     }
 
-    /// Return the image height in pixels.
     pub fn height(&self) -> u32 {
-        match self {
-            AnyImage::Blp { img, .. } => img.height,
-            AnyImage::Image(d) => d.height(),
+        match &self.data {
+            AnyImageData::Blp(b) => b.height,
+            _ => self.frames.get(0).map(|f| f.height).unwrap_or(0),
         }
     }
 
     /// Convert into a single `DynamicImage`. For BLP this returns the first mip
     /// (decoded on demand). Consumes self.
+    /// Decode and return the first frame as DynamicImage.
     pub fn into_dynamic(self) -> Result<DynamicImage, BlpError> {
-        match self {
-            AnyImage::Image(d) => Ok(d),
-            AnyImage::Blp { mut img, buf } => {
-                // Decode only the first mip
-                img.decode(&buf, &[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false])?;
-                if let Some(im) = img.mipmaps[0].image.take() {
-                    Ok(DynamicImage::ImageRgba8(im))
+        match self.data {
+            AnyImageData::Blp(_) => crate::_from::open(&self.buf),
+            AnyImageData::Gif => {
+                // GIF: return the first decoded frame as DynamicImage
+                let frames = crate::gif::Gif::decode_frames(&self.buf)?;
+                if let Some(first) = frames.into_iter().next() {
+                    Ok(image::DynamicImage::ImageRgba8(first))
                 } else {
-                    Err(BlpError::new("blp-no-mip"))
+                    Err(BlpError::new("error-gif-no-frame"))
                 }
             }
+            AnyImageData::Psd => crate::_from::open(&self.buf),
+            AnyImageData::Image => crate::_from::open(&self.buf),
         }
     }
 
     /// Produce a Vec of mipmaps (owned `RgbaImage`s).
     /// For BLP: return the full decoded mip chain. For regular images: generate
     /// a mip chain by successive downscaling of the base image.
-    pub fn into_mipmaps(self) -> Result<Vec<RgbaImage>, BlpError> {
-        match self {
-            AnyImage::Image(dynimg) => {
-                let mut base = dynimg.to_rgba8();
-                let mut out = Vec::new();
-                out.push(base.clone());
-                for _ in 1..MAX_MIPS {
-                    let (w, h) = (base.width(), base.height());
-                    if w == 1 && h == 1 {
-                        break;
-                    }
-                    let nw = (w / 2).max(1);
-                    let nh = (h / 2).max(1);
-                    let next = image::imageops::resize(&base, nw, nh, image::imageops::FilterType::Lanczos3);
-                    base = next;
-                    out.push(base.clone());
-                }
-                Ok(out)
+    /// Decode and return all frames as RgbaImage (for multi-frame or mipmaps).
+    pub fn decode_frames(&self) -> Result<Vec<RgbaImage>, BlpError> {
+        match &self.data {
+            AnyImageData::Blp(_) => crate::_from::open_mipmaps(&self.buf),
+            AnyImageData::Gif => {
+                crate::gif::Gif::decode_frames(&self.buf)
             }
-            AnyImage::Blp { mut img, buf } => {
-                img.decode(&buf, &[true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true])?;
-                let mut out = Vec::new();
-                for m in img.mipmaps.into_iter().take(MAX_MIPS) {
-                    if let Some(rgba) = m.image {
-                        out.push(rgba);
-                    }
+            AnyImageData::Psd | AnyImageData::Image => {
+                let img = image::load_from_memory(&self.buf)?.to_rgba8();
+                Ok(vec![img])
+            }
+        }
+    }
+
+    /// Decode a single frame by index. For BLP, it returns the selected mipmap.
+    pub fn decode_frame(&self, idx: usize) -> Result<RgbaImage, BlpError> {
+        match &self.data {
+            AnyImageData::Blp(b) => {
+                // Use BLP internal decoders targeted to the single index
+                let mut mask = [false; 16];
+                if idx < mask.len() { mask[idx] = true; }
+                let decoded = match b.texture_type {
+                    crate::blp::TextureType::JPEG => crate::_decode::decode_jpeg_to_mipmaps(b, &self.buf, &mask)?,
+                    crate::blp::TextureType::PALETTE => crate::_decode::decode_direct_to_mipmaps(b, &self.buf, &mask)?,
+                };
+                if let Some(Some(img)) = decoded.into_iter().nth(idx) {
+                    Ok(img)
+                } else {
+                    Err(BlpError::new("error-blp-no-mipmap"))
                 }
-                Ok(out)
+            }
+            AnyImageData::Gif => {
+                // use the gif module for GIF frames
+                crate::gif::Gif::decode_frame(&self.buf, idx)
+            }
+            AnyImageData::Psd => {
+                // PSD is single-frame: use psd module
+                crate::psd::PsdImage::decode_frame(&self.buf, idx)
+            }
+            AnyImageData::Image => {
+                // single-frame
+                let img = image::load_from_memory(&self.buf)?.to_rgba8();
+                if idx == 0 { Ok(img) } else { Err(BlpError::new("error-frame-oob").with_arg("idx", idx as u32)) }
             }
         }
     }
 
     /// If this is a BLP, return metadata; otherwise None.
-    pub fn blp_meta(&self) -> Option<BlpMeta> {
-        match self {
-            AnyImage::Blp { img, .. } => Some(BlpMeta {
-                version: img.version,
-                texture_type: img.texture_type,
-                compression: img.compression,
-                alpha_bits: img.alpha_bits,
-                alpha_type: img.alpha_type,
-                has_mips: img.has_mips,
-                width: img.width,
-                height: img.height,
-                extra: img.extra,
-                has_mipmaps: img.has_mipmaps,
-                mipmaps: img
-                    .mipmaps
-                    .iter()
-                    .enumerate()
-                    .map(|(i, m)| MipInfo { index: i, width: m.width, height: m.height, offset: m.offset, length: m.length })
-                    .collect(),
-                holes: img.holes,
-                header_offset: img.header_offset,
-                header_length: img.header_length,
-            }),
-            AnyImage::Image(_) => None,
+    /// Return parsed BLP header as the new `blp::Blp` struct if buffer is BLP.
+    pub fn blp_meta(&self) -> Option<Blp> {
+        match &self.data {
+            AnyImageData::Blp(b) => Some(b.clone()),
+            _ => None,
         }
     }
 
     /// For BLP images return the shared JPEG header slice if present.
     pub fn shared_jpeg_header(&self) -> Option<&[u8]> {
-        match self {
-            AnyImage::Blp { img, buf } => img.shared_jpeg_header(buf),
+        match &self.data {
+            AnyImageData::Blp(_) => blp::shared_jpeg_header(&self.buf),
             _ => None,
         }
     }
 
     /// For BLP images return raw mip payload for index.
     pub fn mip_raw(&self, idx: usize) -> Option<&[u8]> {
-        match self {
-            AnyImage::Blp { img, buf } => img.mip_raw(buf, idx),
+        match &self.data {
+            AnyImageData::Blp(_) => blp::mip_raw(&self.buf, idx),
             _ => None,
         }
     }

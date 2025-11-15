@@ -1,4 +1,4 @@
-use crate::_blp_image::BlpImage;
+use crate::blp::Blp;
 use crate::_error::error::BlpError;
 use image::imageops::{FilterType, crop_imm, resize};
 use image::{self};
@@ -62,7 +62,7 @@ fn decode_image_common(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
 
 /// Decode an external image into the BlpImage mip chain (scale-to-cover & crop). The function
 /// populates `img.mipmaps[*].image` for visible mips.
-pub fn decode_image_to_mipmaps(img: &mut BlpImage, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
+pub fn decode_image_to_mipmaps(img: &mut Blp, buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<image::RgbaImage>>, BlpError> {
     // --- Decode source into RGBA8 ---
     let src = decode_image_common(buf)?;
     let src = src.to_rgba8();
@@ -95,10 +95,11 @@ pub fn decode_image_to_mipmaps(img: &mut BlpImage, buf: &[u8], mip_visible: &[bo
     let mut prev = base;
     let (mut w, mut h) = (tw, th);
 
-    for i in 0..img.mipmaps.len() {
+    let mut out: Vec<Option<image::RgbaImage>> = Vec::with_capacity(img.frames.len());
+    for i in 0..img.frames.len() {
         // Record dimensions for this mip (even if we skip pixels).
-        img.mipmaps[i].width = w;
-        img.mipmaps[i].height = h;
+        img.frames[i].width = w;
+        img.frames[i].height = h;
 
         // Visibility gate: missing entry → treated as `true`.
         let visible = mip_visible
@@ -106,19 +107,18 @@ pub fn decode_image_to_mipmaps(img: &mut BlpImage, buf: &[u8], mip_visible: &[bo
             .copied()
             .unwrap_or(true);
         if visible {
-            // Materialize RGBA only if requested.
-            img.mipmaps[i].image = Some(prev.clone());
+            out.push(Some(prev.clone()));
         } else {
-            img.mipmaps[i].image = None;
+            out.push(None);
         }
 
         // Stop when we reached 1×1.
         if w == 1 && h == 1 {
             // Optionally clear the rest (keep dims at 1×1 and no pixels).
-            for j in (i + 1)..img.mipmaps.len() {
-                img.mipmaps[j].width = 1;
-                img.mipmaps[j].height = 1;
-                img.mipmaps[j].image = None;
+            for j in (i + 1)..img.frames.len() {
+                // Future levels are empty
+                // (we keep their dims in Blp::frames, but return no images)
+                // do nothing — out will be padded later
             }
             break;
         }
@@ -136,11 +136,12 @@ pub fn decode_image_to_mipmaps(img: &mut BlpImage, buf: &[u8], mip_visible: &[bo
         h = next_h;
     }
 
-    Ok(())
+    while out.len() < img.frames.len() { out.push(None); }
+    Ok(out)
 }
 
-impl BlpImage {
-    pub fn decode_image(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
+impl Blp {
+    pub fn decode_image(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<image::RgbaImage>>, BlpError> {
         decode_image_to_mipmaps(self, buf, mip_visible)
     }
 }
@@ -167,14 +168,15 @@ impl BlpImage {
 pub fn decode_to_rgba(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
     // Check if it's a BLP file
     if is_blp_file(buf) {
-        // Decode BLP and get first mipmap
-        let mut blp = BlpImage::from_buf_blp(buf)?;
-
-        // Decode only first mip - all others are disabled
-        blp.decode(buf, &[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false])?;
-
-        // Get first mipmap
-        if let Some(img) = blp.mipmaps[0].image.take() {
+        // Parse header into Blp
+        let mut blp = crate::blp::parse_header(buf)?;
+        // Decode only first frame/mip
+        let decoded = match blp.texture_type {
+            crate::blp::TextureType::JPEG => crate::_decode::decode_jpeg_to_mipmaps(&blp, buf, &[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false])?,
+            crate::blp::TextureType::PALETTE => crate::_decode::decode_direct_to_mipmaps(&blp, buf, &[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false])?,
+        };
+        // First present decoded image
+        if let Some(Some(img)) = decoded.into_iter().next() {
             Ok(image::DynamicImage::ImageRgba8(img))
         } else {
             Err(BlpError::new("error-blp-no-mipmap"))

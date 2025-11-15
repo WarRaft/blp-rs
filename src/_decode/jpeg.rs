@@ -1,14 +1,14 @@
-use crate::_blp_image::BlpImage;
+use crate::blp::Blp;
 use crate::_error::error::BlpError;
 use image::{Rgba, RgbaImage};
 use jpeg_decoder::{Decoder, PixelFormat};
 use std::io::Cursor;
 
 /// Decode JPEG-based BLP mipmaps into `BlpImage::mipmaps[].image` entries.
-pub fn decode_jpeg_to_mipmaps(img: &mut BlpImage, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
+pub fn decode_jpeg_to_mipmaps(img: &Blp, buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
     // --- Validate header range and slice it out ---
-    let h_off = img.header_offset;
-    let h_len = img.header_length;
+    let h_off = img.header.offset;
+    let h_len = img.header.length;
     if h_off.checked_add(h_len).is_none() || h_off + h_len > buf.len() {
         return Err(BlpError::new("jpeg.header.oob"));
     }
@@ -18,26 +18,28 @@ pub fn decode_jpeg_to_mipmaps(img: &mut BlpImage, buf: &[u8], mip_visible: &[boo
     let force_opaque = img.alpha_bits == 0;
 
     // --- Walk over mip chain ---
-    for i in 0..img.mipmaps.len() {
+    let mut out: Vec<Option<RgbaImage>> = Vec::with_capacity(img.frames.len());
+    for i in 0..img.frames.len() {
         // Visibility gate: missing entry → treated as `true`.
         let visible = mip_visible
             .get(i)
             .copied()
             .unwrap_or(true);
         if !visible {
-            // Do not materialize pixels for this mip.
-            img.mipmaps[i].image = None;
+            out.push(None);
             continue;
         }
 
-        let off = img.mipmaps[i].offset;
-        let len = img.mipmaps[i].length;
+    let off = img.frames[i].offset;
+    let len = img.frames[i].length;
 
         // Skip empty mips or invalid ranges safely.
         if len == 0 {
+            out.push(None);
             continue;
         }
         if off.checked_add(len).is_none() || off + len > buf.len() {
+            out.push(None);
             continue;
         }
 
@@ -165,18 +167,27 @@ pub fn decode_jpeg_to_mipmaps(img: &mut BlpImage, buf: &[u8], mip_visible: &[boo
         }
 
         // --- Store image into the matching mip level ---
-        if img.mipmaps[i].width == w && img.mipmaps[i].height == h {
-            img.mipmaps[i].image = Some(imgbuf);
-        } else if let Some(level) = (0..img.mipmaps.len()).find(|&lvl| img.mipmaps[lvl].width == w && img.mipmaps[lvl].height == h) {
-            img.mipmaps[level].image = Some(imgbuf);
+        // Match decoded image to declared frame size
+        if img.frames[i].width == w && img.frames[i].height == h {
+            out.push(Some(imgbuf));
+        } else if let Some(level) = (0..img.frames.len()).find(|&lvl| img.frames[lvl].width == w && img.frames[lvl].height == h) {
+            // Place it into matching level
+            // Ensure output vector has length up to level + 1
+            while out.len() <= level { out.push(None); }
+            out[level] = Some(imgbuf);
+        } else {
+            // unmatched — push as a tail frame
+            out.push(Some(imgbuf));
         }
     }
 
-    Ok(())
+    // pad to full length
+    while out.len() < img.frames.len() { out.push(None); }
+    Ok(out)
 }
 
-impl BlpImage {
-    pub fn decode_jpeg(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
+impl Blp {
+    pub fn decode_jpeg(&self, buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
         decode_jpeg_to_mipmaps(self, buf, mip_visible)
     }
 }

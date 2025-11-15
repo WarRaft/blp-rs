@@ -2,7 +2,7 @@ use crate::_encode::utils::pack_rgba_to_cmyk_fast::pack_rgba_to_cmyk_fast;
 use crate::_encode::utils::pack_rgba_to_rgb_fast::pack_rgba_to_rgb_fast;
 use crate::_encode::utils::read_be_u16::read_be_u16;
 use crate::_encode::utils::rebuild_minimal_jpeg_header::rebuild_minimal_jpeg_header;
-use crate::_blp_image::{BlpImage, MAX_MIPS};
+use crate::blp::{Blp, MAX_MIPS};
 use crate::_error::error::BlpError;
 use std::ffi::CStr;
 use turbojpeg::{libc, raw};
@@ -23,8 +23,8 @@ pub struct Ctx {
     pub encode_ms_total: f64,
 }
 
-impl BlpImage {
-    pub fn encode_blp(&self, quality: u8, mip_visible: &[bool]) -> Result<Ctx, BlpError> {
+impl Blp {
+    pub fn encode_blp(&self, quality: u8, mip_visible: &[bool], frame_images: &[Option<image::RgbaImage>]) -> Result<Ctx, BlpError> {
         use image::RgbaImage;
         use std::{ptr, time::Instant};
 
@@ -39,21 +39,21 @@ impl BlpImage {
         }
 
         // 1) находим первый видимый с картинкой
-        let total = self.mipmaps.len().min(MAX_MIPS);
+        let total = self.frames.len().min(MAX_MIPS);
         let start_idx = (0..total)
-            .find(|&i| {
+                .find(|&i| {
                 mip_visible
                     .get(i)
                     .copied()
                     .unwrap_or(true)
-                    && self.mipmaps[i].image.is_some()
+                    && frame_images.get(i).cloned().unwrap_or(None).is_some()
             })
             .ok_or_else(|| BlpError::new("no_visible_mips_after_mask"))?;
 
         // 1.1) собираем work начиная с start_idx (только ссылки)
         let mut work: Vec<WorkMip> = Vec::with_capacity(total - start_idx);
         for i in start_idx..total {
-            let m = &self.mipmaps[i];
+            let m = &self.frames[i];
             work.push(WorkMip {
                 w: m.width,
                 h: m.height,
@@ -61,7 +61,7 @@ impl BlpImage {
                     .get(i)
                     .copied()
                     .unwrap_or(true),
-                img: m.image.clone(), // clone owned image if present
+                img: frame_images.get(i).cloned().unwrap_or(None), // clone owned image if provided
                 encoded: Vec::new(),
                 encode_ms: 0.0,
             });
@@ -83,12 +83,13 @@ impl BlpImage {
                 .with_arg("got_w", base_img_ref.width())
                 .with_arg("got_h", base_img_ref.height()));
         }
+        // (helper kept for a future refactor) 
         let has_alpha = base_img_ref.pixels().any(|p| p.0[3] != 255);
 
         let t0 = Instant::now();
 
         // 3) кодирование мипов → WorkMip.encoded
-        for wm in &mut work {
+        for (i, wm) in work.iter_mut().enumerate() {
             if !(wm.vis && wm.img.is_some()) {
                 wm.encoded.clear();
                 wm.encode_ms = 0.0;
@@ -104,6 +105,7 @@ impl BlpImage {
                     .with_arg("want_h", wm.h)
                     .with_arg("got_w", wz)
                     .with_arg("got_h", hz));
+                    // this comment intentionally kept for clarity
             }
 
             // упаковка под TurboJPEG

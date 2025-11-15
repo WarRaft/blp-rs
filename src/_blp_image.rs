@@ -1,74 +1,63 @@
-use crate::_error::error::BlpError;
-use crate::_mipmap::Mipmap;
-use crate::_types::{TextureType, Version};
+// Backwards-compatibility shim. BLP header parsing, metadata and helpers
+// were moved to `crate::blp::blp`. Keep this minimal wrapper to avoid
+// duplicating business logic.
 
-pub const MAX_MIPS: usize = 16;
-pub const HEADER_SIZE: u64 = 156;
+pub use crate::blp::blp::HEADER_SIZE;
+pub use crate::blp::MAX_MIPS;
+pub use crate::blp::Blp as BlpImage;
+pub use crate::blp::Frame as Mipmap;
+pub use crate::blp::Blp as BlpMeta; // legacy name; prefer crate::blp::Blp
 
-/// Checks if buffer is a BLP file by signature
-fn is_blp_file(buf: &[u8]) -> bool {
-    // BLP files start with "BLP1" or "BLP2" signature (or just "BLP" prefix)
-    buf.len() >= 3 && &buf[..3] == b"BLP"
-}
-
-#[derive(Debug, Default)]
-pub struct BlpImage {
-    #[allow(dead_code)]
-    pub version: Version,
-    pub texture_type: TextureType,
-    pub compression: u8,
-    pub alpha_bits: u32,
-    pub alpha_type: u8,
-    pub has_mips: u8,
-    pub width: u32,
-    pub height: u32,
-    pub extra: u32,       // meaningful only if version <= BLP1
-    pub has_mipmaps: u32, // meaningful only if version <= BLP1 or >= BLP2
-    //
-    pub mipmaps: Vec<Mipmap>,
-    pub holes: usize,
-    pub header_offset: usize,
-    pub header_length: usize,
-}
-
-/// Lightweight metadata for a mip level (no pixel materialization)
-pub struct MipInfo {
-    pub index: usize,
-    pub width: u32,
-    pub height: u32,
-    pub offset: usize,
-    pub length: usize,
-}
-
-/// Metadata summary for a BLP buffer. Does not allocate pixel images.
-pub struct BlpMeta {
-    pub version: Version,
-    pub texture_type: TextureType,
-    pub compression: u8,
-    pub alpha_bits: u32,
-    pub alpha_type: u8,
-    pub has_mips: u8,
-    pub width: u32,
-    pub height: u32,
-    pub extra: u32,
-    pub has_mipmaps: u32,
-    pub mipmaps: Vec<MipInfo>,
-    pub holes: usize,
-    pub header_offset: usize,
-    pub header_length: usize,
-}
+pub use crate::blp::{parse_header, from_rgba as from_rgba_impl, shared_jpeg_header as shared_jpeg_header_impl, mip_raw as mip_raw_impl};
 
 impl BlpImage {
     pub fn from_buf(buf: &[u8]) -> Result<Self, BlpError> {
         // Only BLP buffers are supported by the core BlpImage constructor now.
-        if is_blp_file(buf) { Self::from_buf_blp(buf) } else { Err(BlpError::new("error-not-blp")) }
+        if is_blp_file(buf) {
+            let b = crate::blp::parse_header(buf)?;
+            Ok(BlpImage {
+                version: b.version,
+                texture_type: b.texture_type,
+                compression: b.compression,
+                alpha_bits: b.alpha_bits,
+                alpha_type: b.alpha_type,
+                has_mips: b.has_mips,
+                width: b.width,
+                height: b.height,
+                extra: b.extra,
+                has_mipmaps: b.has_mipmaps,
+                mipmaps: b.frames,
+                holes: b.holes,
+                header_offset: b.header.offset,
+                header_length: b.header.length,
+            })
+        } else {
+            Err(BlpError::new("error-not-blp"))
+        }
     }
 
     /// Create BLP from raw RGBA buffer.
     /// Buffer must be in RGBA format (4 bytes per pixel).
     /// Width and height must match the buffer size.
     pub fn from_rgba(rgba_buf: &[u8], width: u32, height: u32) -> Result<Self, BlpError> {
-        Self::from_rgba_impl(rgba_buf, width, height)
+        // Convert canonical Blp header into legacy BlpImage for backward compat
+        let blp = crate::blp::from_rgba(rgba_buf, width, height)?;
+        Ok(BlpImage {
+            version: blp.version,
+            texture_type: blp.texture_type,
+            compression: blp.compression,
+            alpha_bits: blp.alpha_bits,
+            alpha_type: blp.alpha_type,
+            has_mips: blp.has_mips,
+            width: blp.width,
+            height: blp.height,
+            extra: blp.extra,
+            has_mipmaps: blp.has_mipmaps,
+            mipmaps: blp.frames,
+            holes: blp.holes,
+            header_offset: blp.header.offset,
+            header_length: blp.header.length,
+        })
     }
 
     /// Top-level decode entry.
@@ -78,29 +67,35 @@ impl BlpImage {
     pub fn decode(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
         // Decode BLP payloads according to texture type.
         match self.texture_type {
-            TextureType::DIRECT => self.decode_direct(buf, mip_visible),
-            TextureType::JPEG => self.decode_jpeg(buf, mip_visible),
+            TextureType::PALETTE => {
+                // Decode directly but ignore produced images for legacy BlpImage.
+                let _ = crate::_decode::decode_direct_to_mipmaps(&crate::blp::parse_header(buf)?, buf, mip_visible)?;
+                Ok(())
+            }
+            TextureType::JPEG => {
+                let _ = crate::_decode::decode_jpeg_to_mipmaps(&crate::blp::parse_header(buf)?, buf, mip_visible)?;
+                Ok(())
+            }
         }
     }
 
     /// Inspect raw BLP bytes and return metadata without decoding pixel data.
     /// Returns an error if buffer is not a BLP or is truncated/corrupted.
     pub fn inspect_buf(buf: &[u8]) -> Result<BlpMeta, BlpError> {
-        // We can reuse the internal parser that populates BlpImage fields without
-        // materializing images: from_buf_blp is crate-visible and used here.
-        let img = Self::from_buf_blp(buf)?;
+        // We can reuse the canonical Blp header parser.
+        let img = crate::blp::parse_header(buf)?;
 
-        let mut mipinfos = Vec::with_capacity(img.mipmaps.len());
-        for (i, m) in img.mipmaps.iter().enumerate() {
+            let mut mipinfos = Vec::with_capacity(img.frames.len());
+        for (i, m) in img.frames.iter().enumerate() {
             mipinfos.push(MipInfo { index: i, width: m.width, height: m.height, offset: m.offset, length: m.length });
         }
 
-        Ok(BlpMeta { version: img.version, texture_type: img.texture_type, compression: img.compression, alpha_bits: img.alpha_bits, alpha_type: img.alpha_type, has_mips: img.has_mips, width: img.width, height: img.height, extra: img.extra, has_mipmaps: img.has_mipmaps, mipmaps: mipinfos, holes: img.holes, header_offset: img.header_offset, header_length: img.header_length })
+        Ok(BlpMeta { version: img.version, texture_type: img.texture_type, compression: img.compression, alpha_bits: img.alpha_bits, alpha_type: img.alpha_type, has_mips: img.has_mips, width: img.width, height: img.height, extra: img.extra, has_mipmaps: img.has_mipmaps, mipmaps: mipinfos, holes: img.holes, header_offset: img.header.offset, header_length: img.header.length })
     }
 
     /// Return a slice pointing at the shared JPEG header (for JPEG texture type).
     pub fn shared_jpeg_header<'a>(&self, buf: &'a [u8]) -> Option<&'a [u8]> {
-        if let crate::_types::TextureType::JPEG = self.texture_type {
+        if let crate::blp::TextureType::JPEG = self.texture_type {
             let off = self.header_offset;
             let len = self.header_length;
             if off.checked_add(len).is_some() && off + len <= buf.len() {
@@ -132,8 +127,7 @@ impl BlpImage {
     /// For DIRECT (paletted) textures, return the palette bytes if present.
     /// Palette layout: sequence of 256 RGBA entries (1024 bytes) starting at header_offset.
     pub fn palette_bytes<'a>(&self, buf: &'a [u8]) -> Option<&'a [u8]> {
-        use crate::_types::TextureType;
-        if let TextureType::DIRECT = self.texture_type {
+        if let crate::blp::TextureType::PALETTE = self.texture_type {
             let off = self.header_offset;
             let len = self.header_length;
             if off.checked_add(len).is_some() && off + len <= buf.len() {
@@ -147,8 +141,14 @@ impl BlpImage {
     /// and mip visibility mask. This wraps `from_rgba` -> `encode_blp` and returns
     /// the produced bytes.
     pub fn encode_rgba_to_blp(rgba_buf: &[u8], width: u32, height: u32, quality: u8, mip_visible: &[bool]) -> Result<Vec<u8>, BlpError> {
-        let mut img = Self::from_rgba(rgba_buf, width, height)?;
-        let ctx = img.encode_blp(quality, mip_visible)?;
+        // Use canonical Blp builder then call the encoder on the canonical type
+        let mut img = crate::blp::from_rgba(rgba_buf, width, height)?;
+        // frame images for encoder: base image at index 0
+        use image::ImageBuffer;
+        let base = ImageBuffer::from_raw(width, height, rgba_buf.to_vec()).ok_or_else(|| BlpError::new("error-rgba-image-creation"))?;
+        let mut frame_images: Vec<Option<image::RgbaImage>> = vec![None; img.frames.len()];
+        frame_images[0] = Some(base);
+        let ctx = img.encode_blp(quality, mip_visible, &frame_images)?;
         Ok(ctx.bytes)
     }
 }

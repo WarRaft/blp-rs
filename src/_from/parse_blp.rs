@@ -1,13 +1,12 @@
-use crate::_blp_image::{BlpImage, BlpMeta};
+use crate::blp::{self, Blp};
 use crate::_error::error::BlpError;
 
-/// Parse BLP bytes and return a `BlpImage` instance.
-pub fn parse_blp_image(buf: &[u8]) -> Result<BlpImage, BlpError> {
-    // Reuse existing parser
-    Ok(BlpImage::from_buf_blp(buf)?)
+/// Parse BLP bytes and return a lightweight `blp::Blp` header structure.
+pub fn parse_blp_image(buf: &[u8]) -> Result<Blp, BlpError> {
+    blp::parse_header(buf)
 }
 
-/// Inspect BLP bytes and return metadata (`BlpMeta`) without materializing pixels.
-pub fn parse_blp_meta(buf: &[u8]) -> Result<BlpMeta, BlpError> {
-    BlpImage::inspect_buf(buf)
+/// Inspect BLP bytes and return metadata (currently same as `parse_blp_image`).
+pub fn parse_blp_meta(buf: &[u8]) -> Result<Blp, BlpError> {
+    blp::parse_header(buf)
 }

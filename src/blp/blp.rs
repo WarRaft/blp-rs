@@ -1,4 +1,9 @@
 use num_enum::TryFromPrimitive;
+
+pub const MAX_MIPS: usize = 16;
+pub const HEADER_SIZE: u64 = 156;
+
+#[derive(Debug, Clone)]
 pub struct Blp {
     pub version: Version,
     pub texture_type: TextureType,
@@ -32,10 +37,260 @@ pub enum TextureType {
     PALETTE = 1,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Frame {
     pub width: u32,
     pub height: u32,
     pub offset: usize,
     pub length: usize,
+    // No image data stored here; only metadata
+}
+
+use crate::_error::error::BlpError;
+use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
+use image::RgbaImage;
+use std::io::Cursor;
+
+/// Parse header-only information from a BLP buffer and return a `Blp` struct.
+/// This reuses existing low-level parsing and returns a header-only `Blp`.
+pub fn parse_header(buf: &[u8]) -> Result<Blp, BlpError> {
+    let mut cursor = Cursor::new(buf);
+
+    let version_raw = cursor.read_u32::<BigEndian>()?;
+    let version = Version::try_from(version_raw)?;
+
+    let texture_type_raw = cursor.read_u32::<LittleEndian>()?;
+    let texture_type = TextureType::try_from(texture_type_raw)?;
+
+    let (compression, alpha_bits, alpha_type, has_mips) = if version >= Version::BLP2 {
+        (
+            cursor.read_u8()?,
+            cursor.read_u8()? as u32,
+            cursor.read_u8()?,
+            cursor.read_u8()?,
+        )
+    } else {
+        (0u8, cursor.read_u32::<LittleEndian>()?, 0u8, 0u8)
+    };
+
+    let width = cursor.read_u32::<LittleEndian>()?;
+    let height = cursor.read_u32::<LittleEndian>()?;
+
+    let (extra, has_mipmaps) = if version <= Version::BLP1 {
+        (cursor.read_u32::<LittleEndian>()?, cursor.read_u32::<LittleEndian>()?)
+    } else {
+        (0u32, has_mips as u32)
+    };
+
+    // read offsets/lengths
+    let mut frames_arr: [Frame; MAX_MIPS] = std::array::from_fn(|_| Frame::default());
+    let (mut w, mut h) = (width, height);
+
+    let mi = (32 - width.max(height).leading_zeros()) as usize;
+
+    if version >= Version::BLP1 {
+        for i in 0..MAX_MIPS {
+            frames_arr[i].offset = cursor.read_u32::<LittleEndian>()? as usize;
+        }
+        for i in 0..MAX_MIPS {
+            frames_arr[i].length = cursor.read_u32::<LittleEndian>()? as usize;
+            if i < mi {
+                frames_arr[i].width = w;
+                w = (w / 2).max(1);
+
+                frames_arr[i].height = h;
+                h = (h / 2).max(1);
+            }
+        }
+    }
+
+    // header offset / length
+    let (header_offset, header_length) = match texture_type {
+        TextureType::JPEG => {
+            let base = HEADER_SIZE as usize;
+            if buf.len() < base + 4 {
+                return Err(BlpError::new("truncated: cannot read JPEG header size"));
+            }
+            let mut c = Cursor::new(&buf[base..]);
+            let hdr_len = c.read_u32::<LittleEndian>()? as usize;
+            let hdr_off = base + 4;
+            if buf.len() < hdr_off + hdr_len {
+                return Err(BlpError::new("truncated: JPEG header out of bounds"));
+            }
+            (hdr_off, hdr_len)
+        }
+        TextureType::PALETTE => (HEADER_SIZE as usize, 256 * 4),
+    };
+
+    // compute holes
+    let mut ranges = Vec::new();
+    for i in 0..MAX_MIPS {
+        let off = frames_arr[i].offset;
+        let len = frames_arr[i].length;
+        if len == 0 {
+            continue;
+        }
+        if let Some(end) = off.checked_add(len) {
+            if end <= buf.len() {
+                ranges.push((off, end));
+            }
+        }
+    }
+    ranges.sort_by_key(|r| r.0);
+
+    let mut prev_end = header_offset + header_length;
+    let mut holes = 0usize;
+    for (start, end) in &ranges {
+        if *start >= prev_end {
+            holes += start - prev_end;
+        }
+        if *end > prev_end {
+            prev_end = *end;
+        }
+    }
+    if buf.len() > prev_end {
+        holes += buf.len() - prev_end;
+    }
+
+    let frames = frames_arr
+        .into_iter()
+        .map(|f| Frame { width: f.width, height: f.height, offset: f.offset, length: f.length})
+        .collect();
+    let header = Frame { width: 0, height: 0, offset: header_offset, length: header_length };
+
+    Ok(Blp { version, texture_type, compression, alpha_bits, alpha_type, has_mips, width, height, extra, has_mipmaps, frames, holes, header })
+}
+
+/// Wrap `crate::blp::from_rgba` decode helper as part of blp module.
+pub fn from_rgba(rgba: &[u8], width: u32, height: u32) -> Result<Blp, BlpError> {
+    if width == 0 || height == 0 {
+        return Err(BlpError::new("error-image-empty")
+            .with_arg("width", width)
+            .with_arg("height", height));
+    }
+    let expected = (width as usize) * (height as usize) * 4;
+    if rgba.len() != expected {
+        return Err(BlpError::new("error-rgba-buffer-size")
+            .with_arg("expected", expected)
+            .with_arg("actual", rgba.len()));
+    }
+
+    // build RgbaImage (not stored in Blp directly here)
+    let _base_img = RgbaImage::from_raw(width, height, rgba.to_vec()).ok_or_else(|| BlpError::new("error-rgba-image-creation"))?;
+
+    // build power-of-two mip chain
+    let levels = (32 - width.max(height).leading_zeros()) as usize;
+    let mut frames: Vec<Frame> = Vec::with_capacity(MAX_MIPS);
+    let (mut w, mut h) = (width, height);
+    for i in 0..MAX_MIPS {
+        if i < levels { frames.push(Frame { width: w, height: h, offset: 0, length: 0 }); w = (w / 2).max(1); h = (h / 2).max(1);} else { frames.push(Frame::default()); }
+    }
+
+    Ok(Blp { version: Version::BLP1, texture_type: TextureType::JPEG, compression: 0, alpha_bits: 0, alpha_type: 0, has_mips: 0, width, height, extra: 0, has_mipmaps: 0, frames, holes: 0, header: Frame::default() })
+}
+
+/// Return a slice pointing at the shared JPEG header (if present) without
+/// decoding image pixels.
+pub fn shared_jpeg_header<'a>(buf: &'a [u8]) -> Option<&'a [u8]> {
+    if let Ok(h) = parse_header(buf) {
+        if let crate::blp::TextureType::JPEG = h.texture_type {
+            let off = h.header.offset;
+            let len = h.header.length;
+            if off.checked_add(len).is_some() && off + len <= buf.len() {
+                return Some(&buf[off..off + len]);
+            }
+        }
+    }
+    None
+}
+
+/// Return the raw payload for a given mip index (no decoding).
+pub fn mip_raw<'a>(buf: &'a [u8], mip_index: usize) -> Option<&'a [u8]> {
+    if let Ok(h) = parse_header(buf) {
+        if mip_index >= h.frames.len() { return None; }
+        let f = &h.frames[mip_index];
+        if f.length == 0 { return None; }
+        if f.offset.checked_add(f.length).is_none() || f.offset + f.length > buf.len() { return None; }
+        return Some(&buf[f.offset..f.offset + f.length]);
+    }
+    None
+}
+
+/// Lightweight metadata for a mip level (no pixel materialization)
+#[derive(Debug, Clone)]
+pub struct MipInfo {
+    pub index: usize,
+    pub width: u32,
+    pub height: u32,
+    pub offset: usize,
+    pub length: usize,
+}
+
+/// Metadata summary for a BLP buffer. Does not allocate pixel images.
+#[derive(Debug, Clone)]
+pub struct BlpMeta {
+    pub version: Version,
+    pub texture_type: TextureType,
+    pub compression: u8,
+    pub alpha_bits: u32,
+    pub alpha_type: u8,
+    pub has_mips: u8,
+    pub width: u32,
+    pub height: u32,
+    pub extra: u32,
+    pub has_mipmaps: u32,
+    pub mipmaps: Vec<MipInfo>,
+    pub holes: usize,
+    pub header_offset: usize,
+    pub header_length: usize,
+}
+
+/// Inspect raw BLP bytes and return metadata without decoding pixel data.
+/// Returns an error if buffer is not a BLP or is truncated/corrupted.
+pub fn inspect_buf(buf: &[u8]) -> Result<BlpMeta, BlpError> {
+    let h = parse_header(buf)?;
+
+    let mut mipinfos = Vec::with_capacity(h.frames.len());
+    for (i, f) in h.frames.iter().enumerate() {
+        mipinfos.push(MipInfo { index: i, width: f.width, height: f.height, offset: f.offset, length: f.length });
+    }
+
+    Ok(BlpMeta { version: h.version, texture_type: h.texture_type, compression: h.compression, alpha_bits: h.alpha_bits, alpha_type: h.alpha_type, has_mips: h.has_mips, width: h.width, height: h.height, extra: h.extra, has_mipmaps: h.has_mipmaps, mipmaps: mipinfos, holes: h.holes, header_offset: h.header.offset, header_length: h.header.length })
+}
+
+/// For DIRECT (paletted) textures, return the palette bytes if present.
+/// Palette layout: sequence of 256 RGBA entries (1024 bytes) starting at header_offset.
+pub fn palette_bytes<'a>(buf: &'a [u8]) -> Option<&'a [u8]> {
+    if let Ok(h) = parse_header(buf) {
+        if let crate::blp::TextureType::PALETTE = h.texture_type {
+            let off = h.header.offset;
+            let len = h.header.length;
+            if off.checked_add(len).is_some() && off + len <= buf.len() {
+                return Some(&buf[off..off + len]);
+            }
+        }
+    }
+    None
+}
+
+/// Encode an RGBA raw buffer into BLP bytes with given quality
+/// and mip visibility mask. This wraps `from_rgba` and calls the encoder.
+pub fn encode_rgba_to_blp(rgba_buf: &[u8], width: u32, height: u32, quality: u8, mip_visible: &[bool]) -> Result<Vec<u8>, BlpError> {
+    let mut img = from_rgba(rgba_buf, width, height)?;
+    // frame images for encoder: base image at index 0
+    let base = image::ImageBuffer::from_raw(width, height, rgba_buf.to_vec()).ok_or_else(|| BlpError::new("error-rgba-image-creation"))?;
+    let mut frame_images: Vec<Option<image::RgbaImage>> = vec![None; img.frames.len()];
+    frame_images[0] = Some(base);
+    let ctx = img.encode_blp(quality, mip_visible, &frame_images)?;
+    Ok(ctx.bytes)
+}
+
+impl Blp {
+    /// Decode the BLP payload into frame images according to texture type.
+    pub fn decode(&self, buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
+        match self.texture_type {
+            TextureType::JPEG => crate::_decode::decode_jpeg_to_mipmaps(self, buf, mip_visible),
+            TextureType::PALETTE => crate::_decode::decode_direct_to_mipmaps(self, buf, mip_visible),
+        }
+    }
 }

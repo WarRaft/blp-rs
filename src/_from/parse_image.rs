@@ -1,12 +1,12 @@
-use crate::_blp_image::BlpImage;
+use crate::blp;
 use crate::_error::error::BlpError;
 use crate::_decode::decode_to_rgba;
 
 /// Inspect image bytes and return its declared pixel dimensions without full materialization.
 pub fn inspect_image_dimensions(buf: &[u8]) -> Result<(u32, u32), BlpError> {
     // Only BLP inspection is supported here now.
-    let img = BlpImage::from_buf_blp(buf)?;
-    Ok((img.width, img.height))
+    let h = blp::parse_header(buf)?;
+    Ok((h.width, h.height))
 }
 
 /// Load any supported image (PNG, JPEG, PSD, ...) and return it as DynamicImage.
@@ -28,12 +28,16 @@ pub fn open(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
 /// For BLP files this returns the full mip chain. For regular images (PNG/JPG)
 /// this will generate a mip chain by downscaling the base image.
 pub fn open_mipmaps(buf: &[u8]) -> Result<Vec<image::RgbaImage>, BlpError> {
-    // BLP-only path: parse BLP metadata, decode all mipmaps and return them.
-    let mut img = BlpImage::from_buf_blp(buf)?;
-    img.decode(buf, &[true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true])?;
+    // BLP-only path: parse header, decode all frames and return them.
+    let img = blp::parse_header(buf)?;
+    let mip_visible = &[true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+    let decoded = match img.texture_type {
+        crate::blp::TextureType::JPEG => crate::_decode::decode_jpeg_to_mipmaps(&img, buf, mip_visible)?,
+        crate::blp::TextureType::PALETTE => crate::_decode::decode_direct_to_mipmaps(&img, buf, mip_visible)?,
+    };
     let mut out = Vec::new();
-    for m in img.mipmaps.into_iter().take(crate::_blp_image::MAX_MIPS) {
-        if let Some(rgba) = m.image {
+    for opt in decoded.into_iter().take(crate::blp::MAX_MIPS) {
+        if let Some(rgba) = opt {
             out.push(rgba);
         }
     }

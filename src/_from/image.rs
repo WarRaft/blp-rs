@@ -1,5 +1,4 @@
-use crate::_blp_image::{BlpImage, MAX_MIPS};
-use crate::_mipmap::Mipmap;
+use crate::blp;
 use crate::_error::error::BlpError;
 use image;
 use psd::Psd;
@@ -89,91 +88,22 @@ pub(crate) fn pick_pow2_cover(w0: u32, h0: u32) -> (u32, u32) {
 
 /// Create mipmaps for the given base dimensions.
 /// first_image: Some(image) for the first mipmap if available, None otherwise.
-pub(crate) fn create_mipmaps(base_w: u32, base_h: u32, first_image: Option<image::RgbaImage>) -> Vec<Mipmap> {
-    // How many levels to 1×1 inclusive:
-    // floor(log2(max)) + 1  ==  32 - leading_zeros(max)  (for u32)
-    let levels = (32 - base_w.max(base_h).leading_zeros()) as usize;
+/// Create a `Blp` from a generic image buffer by decoding it to RGBA and
+/// constructing a power-of-two frame chain with the base image as frame 0.
+pub fn from_buf_image(buf: &[u8]) -> Result<crate::blp::Blp, BlpError> {
+    // Decode PSD specially
+    let dynimg = if is_psd_file(buf) {
+        let psd = Psd::from_bytes(buf).map_err(|e| BlpError::new("error-psd-parse").with_arg("error", e.to_string()))?;
+        let rgba = psd.rgba();
+        let w = psd.width();
+        let h = psd.height();
+        image::DynamicImage::ImageRgba8(image::ImageBuffer::from_raw(w, h, rgba).ok_or_else(|| BlpError::new("psd-invalid-dimensions"))?)
+    } else {
+        image::load_from_memory(buf).map_err(|_| BlpError::new("error-image-load"))?
+    };
 
-    let mut mipmaps = Vec::with_capacity(MAX_MIPS);
-    let (mut w, mut h) = (base_w, base_h);
-
-    for i in 0..MAX_MIPS {
-        if i < levels {
-            mipmaps.push(Mipmap { width: w, height: h, image: if i == 0 { first_image.clone() } else { None }, offset: 0, length: 0 });
-            // halve, but not below 1
-            w = (w / 2).max(1);
-            h = (h / 2).max(1);
-        } else {
-            // tail — missing levels
-            mipmaps.push(Mipmap::default());
-        }
-    }
-
-    mipmaps
-}
-
-impl BlpImage {
-    /// Lightweight path for "arbitrary image": layout only without RGBA.
-    /// Supports both regular image formats (via image library),
-    /// and Adobe Photoshop (PSD) files with automatic signature detection.
-    ///
-    /// 1) Read source dimensions (without full decoding)
-    /// 2) Choose target frame (W*,H*) — powers of two by "minimum upscale" and "minimum crop" rule
-    /// 3) Form mipmap chain (only width/height), image=None
-    ///    Tail after 1×1 filled with 0×0 (not 1×1).
-    pub fn from_buf_image(buf: &[u8]) -> Result<Self, BlpError> {
-        // Get image dimensions without full decoding
-        let (w0, h0) = if is_psd_file(buf) {
-            get_psd_dimensions(buf)?
-        } else {
-            let reader = image::ImageReader::new(std::io::Cursor::new(buf))
-                .with_guessed_format()
-                .map_err(|_| BlpError::new("error-image-load"))?;
-            let dimensions = reader
-                .into_dimensions()
-                .map_err(|_| BlpError::new("error-image-load"))?;
-            dimensions
-        };
-
-        if w0 == 0 || h0 == 0 {
-            return Err(BlpError::new("error-image-empty")
-                .with_arg("width", w0)
-                .with_arg("height", h0));
-        }
-
-    // Keep original image size when creating BlpImage from an arbitrary
-    // image buffer — we don't rescale on open. Rescaling only happens
-    // during conversion to BLP inside the encoder.
-    let mipmaps = create_mipmaps(w0, h0, None);
-
-    Ok(BlpImage { width: w0, height: h0, mipmaps, ..Default::default() })
-    }
-
-    /// Create BLP from raw RGBA buffer.
-    /// Buffer must be in RGBA format (4 bytes per pixel).
-    /// Width and height must match the buffer size.
-    pub fn from_rgba_impl(rgba_buf: &[u8], width: u32, height: u32) -> Result<Self, BlpError> {
-        if width == 0 || height == 0 {
-            return Err(BlpError::new("error-image-empty")
-                .with_arg("width", width)
-                .with_arg("height", height));
-        }
-
-        let expected_size = (width * height * 4) as usize;
-        if rgba_buf.len() != expected_size {
-            return Err(BlpError::new("error-rgba-buffer-size")
-                .with_arg("expected", expected_size)
-                .with_arg("actual", rgba_buf.len()));
-        }
-
-
-        // Create RgbaImage from buffer
-        let rgba_image = image::RgbaImage::from_raw(width, height, rgba_buf.to_vec()).ok_or_else(|| BlpError::new("error-rgba-image-creation"))?;
-
-        // Keep original size and attach the provided image as the first mip.
-        let first_image = Some(rgba_image.clone());
-        let mipmaps = create_mipmaps(width, height, first_image);
-
-    Ok(BlpImage { width, height, mipmaps, ..Default::default() })
-    }
+    let rgba = dynimg.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let raw = rgba.into_raw();
+    crate::blp::from_rgba(&raw, w, h)
 }

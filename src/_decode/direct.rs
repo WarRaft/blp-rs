@@ -1,18 +1,18 @@
-use crate::_blp_image::BlpImage;
+use crate::blp::Blp;
 use crate::_error::error::BlpError;
 use byteorder::{LittleEndian, ReadBytesExt};
 use image::RgbaImage;
 use std::io::{Cursor, Read};
 
 /// Decode DIRECT (paletted) BLP into `BlpImage::mipmaps[].image` entries.
-pub fn decode_direct_to_mipmaps(img: &mut BlpImage, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
+pub fn decode_direct_to_mipmaps(img: &Blp, buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
     // --- Read palette ---
     // Palette is located at `img.header_offset` with expected length = 256 * 4.
-    if img.header_offset + img.header_length > buf.len() {
+    if img.header.offset + img.header.length > buf.len() {
         return Err(BlpError::new("direct.header.oob"));
     }
     let mut cur = Cursor::new(&buf[..]);
-    cur.set_position(img.header_offset as u64);
+    cur.set_position(img.header.offset as u64);
 
     let mut palette = [[0u8; 3]; 256];
     for i in 0..256 {
@@ -28,20 +28,22 @@ pub fn decode_direct_to_mipmaps(img: &mut BlpImage, buf: &[u8], mip_visible: &[b
     let alpha_bits = img.alpha_bits;
 
     // --- Process mipmaps ---
-    for i in 0..img.mipmaps.len() {
+    let mut out: Vec<Option<RgbaImage>> = Vec::with_capacity(img.frames.len());
+    for i in 0..img.frames.len() {
         // Check if this mipmap should be decoded
         let visible = mip_visible
             .get(i)
             .copied()
             .unwrap_or(true);
         if !visible {
-            img.mipmaps[i].image = None;
+            out.push(None);
             continue;
         }
 
-        let off = img.mipmaps[i].offset;
-        let len = img.mipmaps[i].length;
+        let off = img.frames[i].offset;
+        let len = img.frames[i].length;
         if len == 0 {
+            out.push(None);
             continue; // no data for this mip
         }
         if off.checked_add(len).is_none() || off + len > buf_len {
@@ -50,7 +52,7 @@ pub fn decode_direct_to_mipmaps(img: &mut BlpImage, buf: &[u8], mip_visible: &[b
 
         cur.set_position(off as u64);
 
-        let (w, h) = (img.mipmaps[i].width, img.mipmaps[i].height);
+    let (w, h) = (img.frames[i].width, img.frames[i].height);
         let pixel_count = (w as usize) * (h as usize);
 
         // --- Read indices (one byte per pixel) ---
@@ -95,13 +97,14 @@ pub fn decode_direct_to_mipmaps(img: &mut BlpImage, buf: &[u8], mip_visible: &[b
             out_img.get_pixel_mut((p as u32) % w, (p as u32) / w)
                 .0 = [r, g, b, a];
         }
-        img.mipmaps[i].image = Some(out_img);
+        out.push(Some(out_img));
     }
-    Ok(())
+    while out.len() < img.frames.len() { out.push(None); }
+    Ok(out)
 }
 
-impl BlpImage {
-    pub fn decode_direct(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<(), BlpError> {
+impl Blp {
+    pub fn decode_direct(&self, buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
         decode_direct_to_mipmaps(self, buf, mip_visible)
     }
 }
