@@ -1,13 +1,12 @@
-use crate::_encode::utils::pack_rgba_to_cmyk_fast::pack_rgba_to_cmyk_fast;
-use crate::_encode::utils::pack_rgba_to_rgb_fast::pack_rgba_to_rgb_fast;
-use crate::_encode::utils::read_be_u16::read_be_u16;
-use crate::_encode::utils::rebuild_minimal_jpeg_header::rebuild_minimal_jpeg_header;
 use crate::blp::{Blp, MAX_MIPS};
-use crate::_error::error::BlpError;
+use crate::error::error::BlpError;
+use crate::blp::encode_utils::pack_rgba_to_cmyk_fast::pack_rgba_to_cmyk_fast;
+use crate::blp::encode_utils::pack_rgba_to_rgb_fast::pack_rgba_to_rgb_fast;
+use crate::blp::encode_utils::read_be_u16::read_be_u16;
+use crate::blp::encode_utils::rebuild_minimal_jpeg_header::rebuild_minimal_jpeg_header;
 use std::ffi::CStr;
 use turbojpeg::{libc, raw};
 
-// === публичные структуры (внешний API) ===
 #[derive(Clone)]
 pub struct Mip {
     pub w: u32,
@@ -28,17 +27,15 @@ impl Blp {
         use image::RgbaImage;
         use std::{ptr, time::Instant};
 
-        // --- рабочая структура (заимствуем, без клонов) ---
         struct WorkMip {
             w: u32,
             h: u32,
             vis: bool,
-            img: Option<RgbaImage>, // own image so we can resample if needed
-            encoded: Vec<u8>,       // полный JPEG (sanitized header + scan + EOI)
+            img: Option<RgbaImage>,
+            encoded: Vec<u8>,
             encode_ms: f64,
         }
 
-        // 1) находим первый видимый с картинкой
         let total = self.frames.len().min(MAX_MIPS);
         let start_idx = (0..total)
                 .find(|&i| {
@@ -50,7 +47,6 @@ impl Blp {
             })
             .ok_or_else(|| BlpError::new("no_visible_mips_after_mask"))?;
 
-        // 1.1) собираем work начиная с start_idx (только ссылки)
         let mut work: Vec<WorkMip> = Vec::with_capacity(total - start_idx);
         for i in start_idx..total {
             let m = &self.frames[i];
@@ -61,17 +57,12 @@ impl Blp {
                     .get(i)
                     .copied()
                     .unwrap_or(true),
-                img: frame_images.get(i).cloned().unwrap_or(None), // clone owned image if provided
+                img: frame_images.get(i).cloned().unwrap_or(None),
                 encoded: Vec::new(),
                 encode_ms: 0.0,
             });
         }
 
-        // Note: we no longer support arbitrary-image sources in the encoder
-        // path; BlpImage is assumed to represent a BLP source. Resampling for
-        // arbitrary images should happen outside of this crate before encoding.
-
-        // 2) базовый мип и альфа
         let base_img_ref = work[0]
             .img
             .as_ref()
@@ -83,12 +74,10 @@ impl Blp {
                 .with_arg("got_w", base_img_ref.width())
                 .with_arg("got_h", base_img_ref.height()));
         }
-        // (helper kept for a future refactor) 
         let has_alpha = base_img_ref.pixels().any(|p| p.0[3] != 255);
 
         let t0 = Instant::now();
 
-        // 3) кодирование мипов → WorkMip.encoded
         for (i, wm) in work.iter_mut().enumerate() {
             if !(wm.vis && wm.img.is_some()) {
                 wm.encoded.clear();
@@ -105,20 +94,17 @@ impl Blp {
                     .with_arg("want_h", wm.h)
                     .with_arg("got_w", wz)
                     .with_arg("got_h", hz));
-                    // this comment intentionally kept for clarity
             }
 
-            // упаковка под TurboJPEG
             let src = rgba.as_raw();
             let (packed, pitch) = if has_alpha {
-                pack_rgba_to_cmyk_fast(src, wz, hz) // pitch = wz * 4
+                pack_rgba_to_cmyk_fast(src, wz, hz)
             } else {
-                pack_rgba_to_rgb_fast(src, wz, hz) // pitch = wz * 3
+                pack_rgba_to_rgb_fast(src, wz, hz)
             };
 
             let t_mip = Instant::now();
 
-            // TurboJPEG 3
             let handle = unsafe { raw::tj3Init(raw::TJINIT_TJINIT_COMPRESS as libc::c_int) };
             if handle.is_null() {
                 return Err(BlpError::new("tj3.init"));
@@ -144,7 +130,7 @@ impl Blp {
                     return Err(tj3_err(handle, "tj3.optimize"));
                 }
                 if raw::tj3Set(
-                    handle, //
+                    handle, 
                     raw::TJPARAM_TJPARAM_COLORSPACE as libc::c_int,
                     if has_alpha { raw::TJCS_TJCS_CMYK } else { raw::TJCS_TJCS_RGB } as libc::c_int,
                 ) != 0
@@ -155,7 +141,7 @@ impl Blp {
                 let mut out_ptr: *mut libc::c_uchar = ptr::null_mut();
                 let mut out_size: raw::size_t = 0;
                 let r = raw::tj3Compress8(
-                    handle, //
+                    handle, 
                     packed.as_ptr(),
                     wz as libc::c_int,
                     pitch as libc::c_int,
@@ -173,13 +159,12 @@ impl Blp {
                 vec
             };
 
-            // sanitize header
             let (head_len, _scan_len) = split_header_and_scan(&jpeg_raw)?;
             let header_clean = rebuild_minimal_jpeg_header(&jpeg_raw[..head_len])?;
             wm.encoded = {
                 let mut v = Vec::with_capacity(jpeg_raw.len());
                 v.extend_from_slice(&header_clean);
-                v.extend_from_slice(&jpeg_raw[head_len..]); // scan + EOI
+                v.extend_from_slice(&jpeg_raw[head_len..]);
                 v
             };
             wm.encode_ms = t_mip.elapsed().as_secs_f64() * 1000.0;
@@ -187,7 +172,6 @@ impl Blp {
 
         let encode_ms_total = t0.elapsed().as_secs_f64() * 1000.0;
 
-        // первый видимый обязан быть закодирован
         if work
             .first()
             .map(|m| m.encoded.is_empty())
@@ -196,13 +180,12 @@ impl Blp {
             return Err(BlpError::new("first_visible_slot_missing"));
         }
 
-        // 4) общий header как общий префикс
         let mut heads: Vec<&[u8]> = Vec::new();
         for m in &work {
             if m.encoded.is_empty() {
                 continue;
             }
-            let (hlen, _) = split_header_and_scan(&m.encoded)?; // вычисляем на лету
+            let (hlen, _) = split_header_and_scan(&m.encoded)?;
             heads.push(&m.encoded[..hlen]);
         }
         if heads.is_empty() {
@@ -232,32 +215,28 @@ impl Blp {
             .filter(|m| !m.encoded.is_empty())
             .count();
 
-        // заголовок BLP1
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"BLP1");
-        bytes.extend_from_slice(&0u32.to_le_bytes()); // compression = 0 (JPEG)
-        bytes.extend_from_slice(&(if has_alpha { 8u32 } else { 0u32 }).to_le_bytes()); // flags
+        bytes.extend_from_slice(&0u32.to_le_bytes()); 
+        bytes.extend_from_slice(&(if has_alpha { 8u32 } else { 0u32 }).to_le_bytes());
         bytes.extend_from_slice(&work[0].w.to_le_bytes());
         bytes.extend_from_slice(&work[0].h.to_le_bytes());
-        bytes.extend_from_slice(&0u32.to_le_bytes()); // extra field
-        bytes.extend_from_slice(&(if visible_count > 1 { 1u32 } else { 0u32 }).to_le_bytes()); // has_mipmaps
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&(if visible_count > 1 { 1u32 } else { 0u32 }).to_le_bytes());
 
-        // плейсхолдеры offsets / sizes
         let pos_offsets = bytes.len();
         bytes.resize(bytes.len() + MAX_MIPS * 4, 0);
         let pos_sizes = bytes.len();
         bytes.resize(bytes.len() + MAX_MIPS * 4, 0);
 
-        // общий JPEG header
         let jpeg_header_size: u32 = common_header
             .len()
             .try_into()
             .map_err(|_| BlpError::new("jpeg_header_too_large"))?;
         bytes.extend_from_slice(&jpeg_header_size.to_le_bytes());
         bytes.extend_from_slice(&common_header);
-        bytes.extend_from_slice(b"RAFT"); // твой маркер
+        bytes.extend_from_slice(b"RAFT");
 
-        // payload’ы: строгие проверки вместо debug_assert!
         for i in 0..MAX_MIPS.min(work.len()) {
             let m = &work[i];
             if m.encoded.is_empty() {
@@ -295,7 +274,6 @@ impl Blp {
             bytes.extend_from_slice(payload);
         }
 
-        // 5) внешний список мипов (без байтов)
         let mut out_mips: Vec<Mip> = Vec::with_capacity(work.len());
         for wm in &work {
             out_mips.push(Mip { w: wm.w, h: wm.h, visible: wm.vis, encode_ms: wm.encode_ms });
@@ -305,81 +283,15 @@ impl Blp {
     }
 }
 
-fn split_header_and_scan(jpeg: &[u8]) -> Result<(usize, usize), BlpError> {
-    if jpeg.len() < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8 {
-        return Err(BlpError::new("jpeg.bad_soi"));
-    }
-    let mut i = 2usize;
-    loop {
-        while i < jpeg.len() && jpeg[i] == 0xFF {
-            i += 1;
-        }
-        if i >= jpeg.len() {
-            return Err(BlpError::new("jpeg.truncated"));
-        }
-        let m = jpeg[i];
-        i += 1;
-        match m {
-            0xD9 => return Err(BlpError::new("jpeg.eoi_before_sos")),
-            0xD0..=0xD7 | 0x01 => {} // no length
-            0xDA => {
-                if i + 2 > jpeg.len() {
-                    return Err(BlpError::new("jpeg.sos_len"));
-                }
-                let seg_len = read_be_u16(&jpeg[i..i + 2])? as usize;
-                let seg_end = i + seg_len;
-                if seg_end > jpeg.len() {
-                    return Err(BlpError::new("jpeg.sos_trunc"));
-                }
-                let head_len = seg_end;
-                let mut j = head_len;
-                while j + 1 < jpeg.len() {
-                    if jpeg[j] == 0xFF {
-                        let n = jpeg[j + 1];
-                        if n == 0x00 || (0xD0..=0xD7).contains(&n) {
-                            j += 2;
-                            continue;
-                        }
-                        if n == 0xD9 {
-                            return Ok((head_len, j - head_len));
-                        }
-                    }
-                    j += 1;
-                }
-                return Err(BlpError::new("jpeg.eoi_not_found"));
-            }
-            _ => {
-                if i + 2 > jpeg.len() {
-                    return Err(BlpError::new("jpeg.seg_len"));
-                }
-                let seg_len = read_be_u16(&jpeg[i..i + 2])? as usize;
-                let seg_end = i + seg_len;
-                if seg_end > jpeg.len() {
-                    return Err(BlpError::new("jpeg.seg_trunc"));
-                }
-                i = seg_end;
-            }
-        }
-    }
-}
-
 fn header_prefix(heads: &[&[u8]]) -> Vec<u8> {
-    if heads.is_empty() {
-        return Vec::new();
-    }
-    let min_len = heads
-        .iter()
-        .map(|h| h.len())
-        .min()
-        .unwrap();
+    if heads.is_empty() { return Vec::new(); }
+    let min_len = heads.iter().map(|h| h.len()).min().unwrap_or(0);
     let mut out = Vec::with_capacity(min_len);
     for i in 0..min_len {
         let b = heads[0][i];
         if heads.iter().all(|h| h[i] == b) {
             out.push(b);
-        } else {
-            break;
-        }
+        } else { break; }
     }
     out
 }
@@ -387,13 +299,46 @@ fn header_prefix(heads: &[&[u8]]) -> Vec<u8> {
 fn tj3_err(handle: raw::tjhandle, key: &'static str) -> BlpError {
     let msg = unsafe {
         let p = raw::tj3GetErrorStr(handle);
-        if p.is_null() {
-            "unknown".to_string()
-        } else {
-            CStr::from_ptr(p)
-                .to_string_lossy()
-                .into_owned()
-        }
+        if p.is_null() { "unknown".to_string() } else { CStr::from_ptr(p).to_string_lossy().into_owned() }
     };
     BlpError::new(key).with_arg("msg", msg)
+}
+
+fn split_header_and_scan(jpeg: &[u8]) -> Result<(usize, usize), BlpError> {
+    if jpeg.len() < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8 { return Err(BlpError::new("jpeg.bad_soi")); }
+    let mut i = 2usize;
+    loop {
+        while i < jpeg.len() && jpeg[i] == 0xFF { i += 1; }
+        if i >= jpeg.len() { return Err(BlpError::new("jpeg.truncated")); }
+        let m = jpeg[i];
+        i += 1;
+        match m {
+            0xD9 => return Err(BlpError::new("jpeg.eoi_before_sos")),
+            0xD0..=0xD7 | 0x01 => {},
+            0xDA => {
+                if i + 2 > jpeg.len() { return Err(BlpError::new("jpeg.sos_len")); }
+                let seg_len = read_be_u16(&jpeg[i..i + 2])? as usize;
+                let seg_end = i + seg_len;
+                if seg_end > jpeg.len() { return Err(BlpError::new("jpeg.sos_trunc")); }
+                let head_len = seg_end;
+                let mut j = head_len;
+                while j + 1 < jpeg.len() {
+                    if jpeg[j] == 0xFF {
+                        let n = jpeg[j + 1];
+                        if n == 0x00 || (0xD0..=0xD7).contains(&n) { j += 2; continue; }
+                        if n == 0xD9 { return Ok((head_len, j - head_len)); }
+                    }
+                    j += 1;
+                }
+                return Err(BlpError::new("jpeg.eoi_not_found"));
+            }
+            _ => {
+                if i + 2 > jpeg.len() { return Err(BlpError::new("jpeg.seg_len")); }
+                let seg_len = read_be_u16(&jpeg[i..i + 2])? as usize;
+                let seg_end = i + seg_len;
+                if seg_end > jpeg.len() { return Err(BlpError::new("jpeg.seg_trunc")); }
+                i = seg_end;
+            }
+        }
+    }
 }

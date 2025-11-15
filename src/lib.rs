@@ -1,16 +1,19 @@
-pub mod _decode;
-mod _encode;
-pub mod _error;
-mod _export;
+// `src/_decode` removed — functions have been moved into `src/_from` and `Blp`.
+// Keep compatibility via `crate::_from::decode_to_rgba` and `Blp::decode_image`.
+// Encoders moved to `crate::blp`.
+// legacy _export module removed - exporters moved into `crate::blp::export` canonical module
 mod _from;
+pub mod error;
 // legacy module _mipmap removed during API migration
 pub mod any_image;
 pub mod blp;
+pub mod format_detector;
 pub mod gif;
 pub mod psd;
+pub mod jpg;
 
 // Core types (new)
-pub use _error::error::BlpError;
+pub use error::error::BlpError;
 
 // Expose new header-based BLP struct
 pub use crate::blp::{Blp, Frame};
@@ -20,24 +23,25 @@ pub use image;
 pub use image::{DynamicImage, RgbaImage};
 
 // from/* helpers re-exported at crate root
-pub use crate::_from::{inspect_image_dimensions, load_image_dynamic, parse_blp_image, parse_blp_meta};
+pub use crate::_from::inspect_image_dimensions;
 // Canonical loader
-pub use crate::_from::open;
 pub use crate::_from::open_mipmaps;
+// Re-export legacy helper for convenience
+pub use crate::_from::decode_to_rgba;
 // High-level AnyImage wrapper
 pub use crate::any_image::AnyImage;
+pub use crate::any_image::AnyImageData;
+// Re-export trait for external detection extension
+pub use crate::format_detector::FormatDetector;
 // format modules
 pub use crate::gif::Gif;
 pub use crate::psd::PsdImage;
-
-// -- decode helpers
-pub use crate::_decode::decode_to_rgba;
-pub use crate::_decode::{decode_direct_to_mipmaps, decode_image_to_mipmaps, decode_jpeg_to_mipmaps};
+pub use crate::jpg::Jpg;
 
 // -- encode helpers & options
-pub use crate::_encode::EncodeOptions;
-pub use crate::_encode::MipSelection;
-pub use crate::_encode::RescalePolicy;
-pub use crate::_encode::encode_mipmaps_to_blp_bytes;
-pub use crate::_encode::encode_rgba_to_blp_bytes;
-pub use crate::_encode::encode_with_options;
+pub use crate::blp::EncodeOptions;
+pub use crate::blp::MipSelection;
+pub use crate::blp::RescalePolicy;
+pub use crate::blp::encode_mipmaps_to_blp_bytes;
+pub use crate::blp::encode_rgba_to_blp_bytes;
+pub use crate::blp::encode_with_options;

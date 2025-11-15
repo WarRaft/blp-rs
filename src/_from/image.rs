@@ -1,5 +1,6 @@
-use crate::blp;
-use crate::_error::error::BlpError;
+// `crate::blp` is not directly used, but left for clarity of module's intent.
+use crate::format_detector::FormatDetector;
+use crate::error::error::BlpError;
 use image;
 use psd::Psd;
 
@@ -106,4 +107,35 @@ pub fn from_buf_image(buf: &[u8]) -> Result<crate::blp::Blp, BlpError> {
     let (w, h) = rgba.dimensions();
     let raw = rgba.into_raw();
     crate::blp::from_rgba(&raw, w, h)
+}
+
+/// Decode any supported image format to DynamicImage.
+///
+/// For BLP files: returns the first mipmap level.
+/// For other formats (PNG, JPG, PSD, etc.): decodes the full image.
+pub fn decode_to_rgba(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
+    // Check if it's a BLP file using canonical detector
+    if crate::blp::Blp::detect(buf) {
+        // Parse header into Blp
+        let mut blp = crate::blp::parse_header(buf)?;
+        // Decode only first frame/mip
+        let decoded = match blp.texture_type {
+            crate::blp::TextureType::JPEG => crate::blp::decode::decode_jpeg_to_mipmaps(&blp, buf, &[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false])?,
+            crate::blp::TextureType::PALETTE => crate::blp::decode::decode_direct_to_mipmaps(&blp, buf, &[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false])?,
+        };
+        // First present decoded image
+        if let Some(Some(img)) = decoded.into_iter().next() {
+            Ok(image::DynamicImage::ImageRgba8(img))
+        } else {
+            Err(BlpError::new("error-blp-no-mipmap"))
+        }
+    } else {
+        // Decode as regular image (PNG, JPG, PSD, etc.)
+        // PSD special-case: delegate to PSD wrapper
+            if crate::psd::PsdImage::detect(buf) {
+            crate::psd::PsdImage::decode_as_dynamic(buf)
+        } else {
+            image::load_from_memory(buf).map_err(|_| BlpError::new("error-image-load"))
+        }
+    }
 }

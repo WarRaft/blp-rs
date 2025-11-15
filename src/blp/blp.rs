@@ -2,6 +2,7 @@ use num_enum::TryFromPrimitive;
 
 pub const MAX_MIPS: usize = 16;
 pub const HEADER_SIZE: u64 = 156;
+use crate::format_detector::FormatDetector;
 
 #[derive(Debug, Clone)]
 pub struct Blp {
@@ -24,6 +25,7 @@ pub struct Blp {
 #[repr(u32)]
 pub enum Version {
     BLP0 = 0x424C5030, // "BLP0"
+// FormatDetector implementation for Blp moved to the bottom of the file.
     #[default]
     BLP1 = 0x424C5031, // "BLP1"
     BLP2 = 0x424C5032, // "BLP2"
@@ -46,7 +48,7 @@ pub struct Frame {
     // No image data stored here; only metadata
 }
 
-use crate::_error::error::BlpError;
+use crate::error::error::BlpError;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use image::RgbaImage;
 use std::io::Cursor;
@@ -289,8 +291,91 @@ impl Blp {
     /// Decode the BLP payload into frame images according to texture type.
     pub fn decode(&self, buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
         match self.texture_type {
-            TextureType::JPEG => crate::_decode::decode_jpeg_to_mipmaps(self, buf, mip_visible),
-            TextureType::PALETTE => crate::_decode::decode_direct_to_mipmaps(self, buf, mip_visible),
+            TextureType::JPEG => crate::blp::decode::decode_jpeg_to_mipmaps(self, buf, mip_visible),
+            TextureType::PALETTE => crate::blp::decode::decode_direct_to_mipmaps(self, buf, mip_visible),
         }
+    }
+    /// Decode an external image (PNG/JPG/PSD/etc.) into power-of-two mip images
+    /// and fill `self.frames[*]` dims accordingly. This mirrors the previous
+    /// top-level helper `decode_image_to_mipmaps` which was moved into this `impl`.
+    pub fn decode_image(&mut self, buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
+        // --- Decode source into RGBA8 ---
+        let src = crate::_from::decode_to_rgba(buf)?;
+        let src = src.to_rgba8();
+
+        // Target size (at least 1×1).
+        let (tw, th) = (self.width.max(1), self.height.max(1));
+        let (sw, sh) = src.dimensions();
+
+        if sw == 0 || sh == 0 {
+            return Err(BlpError::new("error-image-empty")
+                .with_arg("width", sw)
+                .with_arg("height", sh));
+        }
+
+        // --- (1) cover-scale: choose the larger scale so the image covers the target area ---
+        let sx = tw as f32 / sw as f32;
+        let sy = th as f32 / sh as f32;
+        let s = sx.max(sy);
+        let rw = (sw as f32 * s).ceil() as u32;
+        let rh = (sh as f32 * s).ceil() as u32;
+        let resized = crate::image::imageops::resize(&src, rw, rh, crate::image::imageops::FilterType::Lanczos3);
+
+        // --- (2) center-crop to exactly (tw, th) ---
+        let cx = ((rw.saturating_sub(tw)) / 2).min(rw.saturating_sub(tw));
+        let cy = ((rh.saturating_sub(th)) / 2).min(rh.saturating_sub(th));
+        let base = crate::image::imageops::crop_imm(&resized, cx, cy, tw, th).to_image();
+
+        // --- (3) build mip chain, honoring `mip_visible` ---
+        let mut prev = base;
+        let (mut w, mut h) = (tw, th);
+
+        let mut out: Vec<Option<RgbaImage>> = Vec::with_capacity(self.frames.len());
+        for i in 0..self.frames.len() {
+            // Record dimensions for this mip (even if we skip pixels).
+            self.frames[i].width = w;
+            self.frames[i].height = h;
+
+            // Visibility gate: missing entry → treated as `true`.
+            let visible = mip_visible
+                .get(i)
+                .copied()
+                .unwrap_or(true);
+            if visible {
+                out.push(Some(prev.clone()));
+            } else {
+                out.push(None);
+            }
+
+            // Stop when we reached 1×1.
+            if w == 1 && h == 1 {
+                break;
+            }
+
+            // Next mip level dims: halve each dimension, clamp to ≥1.
+            let next_w = (w / 2).max(1);
+            let next_h = (h / 2).max(1);
+
+            // Downscale current level into the next.
+            let next_img = crate::image::imageops::resize(&prev, next_w, next_h, crate::image::imageops::FilterType::Lanczos3);
+
+            prev = next_img;
+            w = next_w;
+            h = next_h;
+        }
+
+        while out.len() < self.frames.len() { out.push(None); }
+        Ok(out)
+    }
+    // Export is implemented in `src/blp/export.rs` to keep helpers together.
+}
+
+impl crate::format_detector::FormatDetector for Blp {
+    fn detect(buf: &[u8]) -> bool {
+        buf.len() >= 3 && &buf[0..3] == b"BLP"
+    }
+
+    fn parse_header(buf: &[u8]) -> Result<Self, crate::error::error::BlpError> {
+        parse_header(buf)
     }
 }

@@ -1,4 +1,4 @@
-use crate::_error::error::BlpError;
+use crate::error::error::BlpError;
 
 /// How to choose which mip levels to produce.
 #[derive(Debug, Clone)]
@@ -41,7 +41,6 @@ impl Default for EncodeOptions {
 
 impl EncodeOptions {
     pub fn validate(&self) -> Result<(), BlpError> {
-        // Basic sanity checks
         if self.quality > 100 { return Err(BlpError::new("encode.invalid_quality").with_arg("quality", self.quality as u32)); }
         Ok(())
     }

@@ -1,5 +1,8 @@
-use crate::_error::error::BlpError;
 use crate::blp::{self, Blp, Frame};
+use crate::error::error::BlpError;
+use crate::format_detector::FormatDetector;
+use crate::gif::Gif;
+use crate::psd::PsdImage;
 use image::GenericImageView;
 use image::{DynamicImage, RgbaImage};
 
@@ -21,33 +24,38 @@ pub struct AnyImage {
 /// Type-specific inner data for `AnyImage`.
 #[derive(Debug, Clone)]
 pub enum AnyImageData {
-    Blp(Blp),                // header-only BLP representation
-    Gif,                     // GIF is multi-frame — frames moved to `AnyImage::frames`
-    Psd,                     // PSD is single-frame — dims available in frames[0]
-    Image,                   // regular single-frame image — frames[0] contains dims
+    Blp(Blp),      // header-only BLP representation
+    Gif(Gif),      // GIF metadata; frames still in AnyImage.frames
+    Psd(PsdImage), // PSD metadata; frames still in AnyImage.frames
+    Image,         // regular single-frame image — frames[0] contains dims
 }
+
+/// Trait to detect & parse headers cheaply for supported formats.
+/// Implementations should be light and must not store the payload (heavy bytes)
+/// — only metadata and pointers into `AnyImage.frames` if needed.
+// FormatDetector trait lives in `src/format_detector.rs` to avoid circular deps.
+// `FormatDetector` now lives in `src/format_detector.rs` and is used by
+// the modules (`blp`, `gif`, `psd`) to implement cheap detection + header parsing.
 
 impl AnyImage {
     /// Try to build AnyImage from a byte buffer.
     /// BLP signature is checked first to avoid double-parsing; then `image` is tried,
     /// then PSD as a last fallback.
     pub fn from_buffer(buf: &[u8]) -> Result<Self, BlpError> {
-        // BLP detection
-            if buf.len() >= 3 && &buf[0..3] == b"BLP" {
+        // Use trait-based detectors — explicit ordering matters (BLP first)
+        if blp::Blp::detect(buf) {
             let blp_hdr = blp::parse_header(buf)?;
             return Ok(AnyImage { data: AnyImageData::Blp(blp_hdr.clone()), buf: buf.to_vec(), frames: blp_hdr.frames.clone() });
         }
 
-        // GIF detection (multi-frame)
-        if buf.len() >= 6 && (&buf[0..6] == b"GIF89a" || &buf[0..6] == b"GIF87a") {
-            let gif_meta = crate::gif::Gif::parse_header(buf)?;
-            return Ok(AnyImage { data: AnyImageData::Gif, buf: buf.to_vec(), frames: gif_meta.frames });
+        if Gif::detect(buf) {
+            let gif_meta = Gif::parse_header(buf)?;
+            return Ok(AnyImage { data: AnyImageData::Gif(gif_meta.clone()), buf: buf.to_vec(), frames: gif_meta.frames });
         }
 
-        // PSD detection (single frame)
-        if buf.len() >= 4 && &buf[0..4] == b"8BPS" {
-            let psd_meta = crate::psd::PsdImage::parse_header(buf)?;
-            return Ok(AnyImage { data: AnyImageData::Psd, buf: buf.to_vec(), frames: psd_meta.frames });
+        if PsdImage::detect(buf) {
+            let psd_meta = PsdImage::parse_header(buf)?;
+            return Ok(AnyImage { data: AnyImageData::Psd(psd_meta.clone()), buf: buf.to_vec(), frames: psd_meta.frames });
         }
 
         // Other image formats (single frame)
@@ -64,14 +72,22 @@ impl AnyImage {
     pub fn width(&self) -> u32 {
         match &self.data {
             AnyImageData::Blp(b) => b.width,
-            _ => self.frames.get(0).map(|f| f.width).unwrap_or(0),
+            _ => self
+                .frames
+                .get(0)
+                .map(|f| f.width)
+                .unwrap_or(0),
         }
     }
 
     pub fn height(&self) -> u32 {
         match &self.data {
             AnyImageData::Blp(b) => b.height,
-            _ => self.frames.get(0).map(|f| f.height).unwrap_or(0),
+            _ => self
+                .frames
+                .get(0)
+                .map(|f| f.height)
+                .unwrap_or(0),
         }
     }
 
@@ -81,7 +97,7 @@ impl AnyImage {
     pub fn into_dynamic(self) -> Result<DynamicImage, BlpError> {
         match self.data {
             AnyImageData::Blp(_) => crate::_from::open(&self.buf),
-            AnyImageData::Gif => {
+            AnyImageData::Gif(_) => {
                 // GIF: return the first decoded frame as DynamicImage
                 let frames = crate::gif::Gif::decode_frames(&self.buf)?;
                 if let Some(first) = frames.into_iter().next() {
@@ -90,7 +106,7 @@ impl AnyImage {
                     Err(BlpError::new("error-gif-no-frame"))
                 }
             }
-            AnyImageData::Psd => crate::_from::open(&self.buf),
+            AnyImageData::Psd(_) => crate::_from::open(&self.buf),
             AnyImageData::Image => crate::_from::open(&self.buf),
         }
     }
@@ -102,10 +118,8 @@ impl AnyImage {
     pub fn decode_frames(&self) -> Result<Vec<RgbaImage>, BlpError> {
         match &self.data {
             AnyImageData::Blp(_) => crate::_from::open_mipmaps(&self.buf),
-            AnyImageData::Gif => {
-                crate::gif::Gif::decode_frames(&self.buf)
-            }
-            AnyImageData::Psd | AnyImageData::Image => {
+            AnyImageData::Gif(_) => crate::gif::Gif::decode_frames(&self.buf),
+            AnyImageData::Psd(_) | AnyImageData::Image => {
                 let img = image::load_from_memory(&self.buf)?.to_rgba8();
                 Ok(vec![img])
             }
@@ -118,10 +132,12 @@ impl AnyImage {
             AnyImageData::Blp(b) => {
                 // Use BLP internal decoders targeted to the single index
                 let mut mask = [false; 16];
-                if idx < mask.len() { mask[idx] = true; }
+                if idx < mask.len() {
+                    mask[idx] = true;
+                }
                 let decoded = match b.texture_type {
-                    crate::blp::TextureType::JPEG => crate::_decode::decode_jpeg_to_mipmaps(b, &self.buf, &mask)?,
-                    crate::blp::TextureType::PALETTE => crate::_decode::decode_direct_to_mipmaps(b, &self.buf, &mask)?,
+                    crate::blp::TextureType::JPEG => crate::blp::decode::decode_jpeg_to_mipmaps(b, &self.buf, &mask)?,
+                    crate::blp::TextureType::PALETTE => crate::blp::decode::decode_direct_to_mipmaps(b, &self.buf, &mask)?,
                 };
                 if let Some(Some(img)) = decoded.into_iter().nth(idx) {
                     Ok(img)
@@ -129,11 +145,12 @@ impl AnyImage {
                     Err(BlpError::new("error-blp-no-mipmap"))
                 }
             }
-            AnyImageData::Gif => {
+            AnyImageData::Gif(_) => {
                 // use the gif module for GIF frames
                 crate::gif::Gif::decode_frame(&self.buf, idx)
             }
-            AnyImageData::Psd => {
+            AnyImageData::Psd(_) => {
+                // PSD metadata is stored in AnyImageData::Psd, but decode uses our psd module.
                 // PSD is single-frame: use psd module
                 crate::psd::PsdImage::decode_frame(&self.buf, idx)
             }

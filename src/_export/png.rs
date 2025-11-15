@@ -1,5 +1,5 @@
 use crate::blp::{Blp, MAX_MIPS};
-use crate::_error::error::BlpError;
+use crate::error::error::BlpError;
 use image::DynamicImage;
 use std::fs;
 use std::path::Path;

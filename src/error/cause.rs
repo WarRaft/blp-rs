@@ -1,4 +1,4 @@
-use crate::_error::error::BlpError;
+use crate::error::error::BlpError;
 use std::error::Error;
 use std::sync::Arc;
 

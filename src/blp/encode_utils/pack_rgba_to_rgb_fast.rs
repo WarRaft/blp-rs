@@ -6,7 +6,7 @@ pub fn pack_rgba_to_rgb_fast(src: &[u8], w: usize, h: usize) -> (Vec<u8>, usize)
     let mut si = 0usize; // step 4
     let mut di = 0usize; // step 3
 
-    // RGBA -> RGB (R,G,БЕЗ альфы)
+    // RGBA -> RGB
     while si < src.len() {
         out[di] = src[si]; // R
         out[di + 1] = src[si + 1]; // G
