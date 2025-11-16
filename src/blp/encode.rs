@@ -8,8 +8,9 @@ use turbojpeg::{libc, raw};
 // ============================================================================
 
 /// Convert RGBA to CMYK format for JPEG encoding.
+/// If has_alpha is false, fills the K (alpha) channel with 255.
 #[inline(always)]
-fn pack_rgba_to_cmyk_fast(src: &[u8], w: usize, h: usize) -> (Vec<u8>, usize) {
+fn pack_rgba_to_cmyk_fast(src: &[u8], w: usize, h: usize, has_alpha: bool) -> (Vec<u8>, usize) {
     debug_assert_eq!(src.len(), w * h * 4);
 
     let mut out = vec![0u8; w * h * 4];
@@ -21,31 +22,11 @@ fn pack_rgba_to_cmyk_fast(src: &[u8], w: usize, h: usize) -> (Vec<u8>, usize) {
         out[di] = src[si + 2]; // C ← B
         out[di + 1] = src[si + 1]; // M ← G
         out[di + 2] = src[si]; // Y ← R
-        out[di + 3] = src[si + 3]; // K ← A
+        out[di + 3] = if has_alpha { src[si + 3] } else { 255 }; // K ← A or 255
         si += 4;
         di += 4;
     }
     (out, w * 4)
-}
-
-/// Convert RGBA to RGB format for JPEG encoding.
-#[inline(always)]
-fn pack_rgba_to_rgb_fast(src: &[u8], w: usize, h: usize) -> (Vec<u8>, usize) {
-    debug_assert_eq!(src.len(), w * h * 4);
-
-    let mut out = vec![0u8; w * h * 3];
-    let mut si = 0usize; // step 4
-    let mut di = 0usize; // step 3
-
-    // RGBA -> RGB
-    while si < src.len() {
-        out[di] = src[si]; // R
-        out[di + 1] = src[si + 1]; // G
-        out[di + 2] = src[si + 2]; // B
-        si += 4;
-        di += 3;
-    }
-    (out, w * 3)
 }
 
 /// Convert two bytes into u16 big-endian.
@@ -303,7 +284,7 @@ impl Blp {
             }
 
             let src = rgba.as_raw();
-            let (packed, pitch) = if has_alpha { pack_rgba_to_cmyk_fast(src, wz, hz) } else { pack_rgba_to_rgb_fast(src, wz, hz) };
+            let (packed, pitch) = pack_rgba_to_cmyk_fast(src, wz, hz, has_alpha);
 
             let handle = unsafe { raw::tj3Init(raw::TJINIT_TJINIT_COMPRESS as libc::c_int) };
             if handle.is_null() {
@@ -329,13 +310,13 @@ impl Blp {
                 if raw::tj3Set(handle, raw::TJPARAM_TJPARAM_OPTIMIZE as libc::c_int, 0) != 0 {
                     return Err(tj3_err(handle, "tj3.optimize"));
                 }
-                if raw::tj3Set(handle, raw::TJPARAM_TJPARAM_COLORSPACE as libc::c_int, if has_alpha { raw::TJCS_TJCS_CMYK } else { raw::TJCS_TJCS_RGB } as libc::c_int) != 0 {
+                if raw::tj3Set(handle, raw::TJPARAM_TJPARAM_COLORSPACE as libc::c_int, raw::TJCS_TJCS_CMYK as libc::c_int) != 0 {
                     return Err(tj3_err(handle, "tj3.colorspace"));
                 }
 
                 let mut out_ptr: *mut libc::c_uchar = ptr::null_mut();
                 let mut out_size: raw::size_t = 0;
-                let r = raw::tj3Compress8(handle, packed.as_ptr(), wz as libc::c_int, pitch as libc::c_int, hz as libc::c_int, if has_alpha { raw::TJPF_TJPF_CMYK } else { raw::TJPF_TJPF_BGR } as libc::c_int, &mut out_ptr, &mut out_size);
+                let r = raw::tj3Compress8(handle, packed.as_ptr(), wz as libc::c_int, pitch as libc::c_int, hz as libc::c_int, raw::TJPF_TJPF_CMYK as libc::c_int, &mut out_ptr, &mut out_size);
                 if r != 0 {
                     return Err(tj3_err(handle, "tj3.compress"));
                 }
