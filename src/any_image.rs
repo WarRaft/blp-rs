@@ -1,10 +1,10 @@
 use crate::blp::{self, Blp, Frame};
+use crate::error::error::BlpError;
 use crate::format_detector::FormatDetector;
 use crate::gif::Gif;
 use crate::psd::PsdImage;
 use image::GenericImageView;
 use image::{DynamicImage, RgbaImage};
-use crate::error::error::BlpError;
 
 /// AnyImage is a convenience wrapper that accepts an in-memory buffer of
 /// unknown image format and exposes a small, user-friendly API.
@@ -43,7 +43,7 @@ impl AnyImage {
     /// then PSD as a last fallback.
     pub fn from_buffer(buf: &[u8]) -> Result<Self, BlpError> {
         // Use trait-based detectors — explicit ordering matters (BLP first)
-        if blp::Blp::detect(buf) {
+        if Blp::detect(buf) {
             let (blp_hdr, frames) = blp::parse_header(buf)?;
             return Ok(AnyImage { data: AnyImageData::Blp(blp_hdr), buf: buf.to_vec(), frames });
         }
@@ -96,18 +96,18 @@ impl AnyImage {
     /// Decode and return the first frame as DynamicImage.
     pub fn into_dynamic(self) -> Result<DynamicImage, BlpError> {
         match self.data {
-            AnyImageData::Blp(_) => crate::any_image::open(&self.buf),
+            AnyImageData::Blp(_) => open(&self.buf),
             AnyImageData::Gif(_) => {
                 // GIF: return the first decoded frame as DynamicImage
-                let frames = crate::gif::Gif::decode_frames(&self.buf)?;
+                let frames = Gif::decode_frames(&self.buf)?;
                 if let Some(first) = frames.into_iter().next() {
-                    Ok(image::DynamicImage::ImageRgba8(first))
+                    Ok(DynamicImage::ImageRgba8(first))
                 } else {
                     Err(BlpError::new("error-gif-no-frame"))
                 }
             }
-            AnyImageData::Psd(_) => crate::any_image::open(&self.buf),
-            AnyImageData::Image => crate::any_image::open(&self.buf),
+            AnyImageData::Psd(_) => open(&self.buf),
+            AnyImageData::Image => open(&self.buf),
         }
     }
 
@@ -117,8 +117,8 @@ impl AnyImage {
     /// Decode and return all frames as RgbaImage (for multi-frame or mipmaps).
     pub fn decode_frames(&self) -> Result<Vec<RgbaImage>, BlpError> {
         match &self.data {
-            AnyImageData::Blp(_) => crate::blp::open_mipmaps(&self.buf),
-            AnyImageData::Gif(_) => crate::gif::Gif::decode_frames(&self.buf),
+            AnyImageData::Blp(_) => blp::open_mipmaps(&self.buf),
+            AnyImageData::Gif(_) => Gif::decode_frames(&self.buf),
             AnyImageData::Psd(_) | AnyImageData::Image => {
                 let img = image::load_from_memory(&self.buf)?.to_rgba8();
                 Ok(vec![img])
@@ -131,23 +131,26 @@ impl AnyImage {
         match &self.data {
             AnyImageData::Blp(b) => {
                 // Use BLP internal decoders targeted to the single index
-                let frame = self.frames.get(idx).ok_or_else(|| BlpError::new("error-frame-oob").with_arg("idx", idx as u32))?;
+                let frame = self
+                    .frames
+                    .get(idx)
+                    .ok_or_else(|| BlpError::new("error-frame-oob").with_arg("idx", idx as u32))?;
                 if frame.length == 0 {
                     return Err(BlpError::new("error-blp-no-mipmap"));
                 }
                 match b.texture_type {
-                    crate::blp::TextureType::JPEG => crate::blp::decode::decode_jpeg_frame(b, frame, &self.buf),
-                    crate::blp::TextureType::PALETTE => crate::blp::decode::decode_direct_frame(b, frame, &self.buf),
+                    blp::TextureType::JPEG => blp::decode::decode_jpeg_frame(b, frame, &self.buf),
+                    blp::TextureType::PALETTE => blp::decode::decode_direct_frame(b, frame, &self.buf),
                 }
             }
             AnyImageData::Gif(_) => {
                 // use the gif module for GIF frames
-                crate::gif::Gif::decode_frame(&self.buf, idx)
+                Gif::decode_frame(&self.buf, idx)
             }
             AnyImageData::Psd(_) => {
                 // PSD metadata is stored in AnyImageData::Psd, but decode uses our psd module.
                 // PSD is single-frame: use psd module
-                crate::psd::PsdImage::decode_frame(&self.buf, idx)
+                PsdImage::decode_frame(&self.buf, idx)
             }
             AnyImageData::Image => {
                 // single-frame
@@ -187,13 +190,13 @@ impl AnyImage {
 /// Mirrors previous `src/_from::decode_to_rgba` and `open`.
 pub fn decode_to_rgba(buf: &[u8]) -> Result<DynamicImage, BlpError> {
     // BLP detection first
-    if crate::blp::Blp::detect(buf) {
-        let (blp, frames) = crate::blp::parse_header(buf)?;
+    if Blp::detect(buf) {
+        let (blp, frames) = blp::parse_header(buf)?;
         if let Some(frame) = frames.get(0) {
             if frame.length > 0 {
                 let img = match blp.texture_type {
-                    crate::blp::TextureType::JPEG => crate::blp::decode::decode_jpeg_frame(&blp, frame, buf)?,
-                    crate::blp::TextureType::PALETTE => crate::blp::decode::decode_direct_frame(&blp, frame, buf)?,
+                    blp::TextureType::JPEG => blp::decode::decode_jpeg_frame(&blp, frame, buf)?,
+                    blp::TextureType::PALETTE => blp::decode::decode_direct_frame(&blp, frame, buf)?,
                 };
                 return Ok(DynamicImage::ImageRgba8(img));
             }
@@ -202,12 +205,14 @@ pub fn decode_to_rgba(buf: &[u8]) -> Result<DynamicImage, BlpError> {
     }
 
     // PSD special-case
-    if crate::psd::PsdImage::detect(buf) {
-        return crate::psd::PsdImage::decode_as_dynamic(buf);
+    if PsdImage::detect(buf) {
+        return PsdImage::decode_as_dynamic(buf);
     }
 
     image::load_from_memory(buf).map_err(|_| BlpError::new("error-image-load"))
 }
 
 /// Alias to `decode_to_rgba` for compatibility with previous `open` name.
-pub fn open(buf: &[u8]) -> Result<DynamicImage, BlpError> { decode_to_rgba(buf) }
+pub fn open(buf: &[u8]) -> Result<DynamicImage, BlpError> {
+    decode_to_rgba(buf)
+}
