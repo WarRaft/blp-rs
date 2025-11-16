@@ -31,6 +31,8 @@ pub use crate::any_image::decode_to_rgba;
 // High-level AnyImage wrapper
 pub use crate::any_image::AnyImage;
 pub use crate::any_image::AnyImageData;
+pub use crate::any_image::EncodeOptions as AnyImageEncodeOptions;
+pub use crate::any_image::EncodeMipOptions;
 // Re-export trait for external detection extension
 pub use crate::format_detector::FormatDetector;
 // format modules
