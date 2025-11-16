@@ -261,7 +261,6 @@ pub fn inspect_buf(buf: &[u8]) -> Result<BlpMeta, BlpError> {
 }
 
 /// Inspect image bytes and return its declared pixel dimensions without full materialization.
-/// This was previously in `src/_from::parse_image`.
 pub fn inspect_image_dimensions(buf: &[u8]) -> Result<(u32, u32), BlpError> {
     let (h, _frames) = parse_header(buf)?;
     Ok((h.width, h.height))
@@ -283,7 +282,6 @@ pub fn palette_bytes<'a>(buf: &'a [u8]) -> Option<&'a [u8]> {
 }
 
 /// For BLP files return all mipmaps as owned `RgbaImage`s.
-/// This function was previously `src::_from::open_mipmaps`.
 pub fn open_mipmaps(buf: &[u8]) -> Result<Vec<image::RgbaImage>, BlpError> {
     let (img, frames) = parse_header(buf)?;
     let mut out = Vec::new();
@@ -334,8 +332,7 @@ impl Blp {
         Ok(out)
     }
     /// Decode an external image (PNG/JPG/PSD/etc.) into power-of-two mip images
-    /// and fill `frames[*]` dims accordingly. This mirrors the previous
-    /// top-level helper `decode_image_to_mipmaps` which was moved into this `impl`.
+    /// and fill `frames[*]` dimensions accordingly.
     pub fn decode_image(&self, frames: &mut [Frame], buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
         // --- Decode source into RGBA8 ---
         let src = crate::any_image::decode_to_rgba(buf)?;
@@ -415,5 +412,21 @@ impl crate::format_detector::FormatDetector for Blp {
 
     fn parse_header(buf: &[u8]) -> Result<(Self, Vec<Frame>), crate::error::error::BlpError> {
         parse_header(buf)
+    }
+}
+
+impl crate::format_detector::ImageDecoder for Blp {
+    fn to_dynamic(buf: &[u8]) -> Result<crate::image::DynamicImage, crate::error::error::BlpError> {
+        // Decode only the first mipmap
+        let (blp, frames) = parse_header(buf)?;
+        if frames.is_empty() {
+            return Err(crate::error::error::BlpError::new("blp.no-frames"));
+        }
+        let frame = &frames[0];
+        let img = match blp.texture_type {
+            TextureType::JPEG => crate::blp::decode::decode_jpeg_frame(&blp, frame, buf)?,
+            TextureType::PALETTE => crate::blp::decode::decode_palette_frame(&blp, frame, buf)?,
+        };
+        Ok(crate::image::DynamicImage::ImageRgba8(img))
     }
 }

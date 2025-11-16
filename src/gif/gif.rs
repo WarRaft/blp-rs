@@ -60,3 +60,15 @@ impl FormatDetector for Gif {
         Gif::parse_header(buf)
     }
 }
+
+impl crate::format_detector::ImageDecoder for Gif {
+    fn to_dynamic(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
+        // Return the first frame as DynamicImage
+        let frames = Gif::decode_frames(buf)?;
+        if let Some(first) = frames.into_iter().next() {
+            Ok(image::DynamicImage::ImageRgba8(first))
+        } else {
+            Err(BlpError::new("error-gif-no-frame"))
+        }
+    }
+}
