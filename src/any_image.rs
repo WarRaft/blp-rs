@@ -344,20 +344,21 @@ impl AnyImage {
                     };
                 }
 
-                // Get base image using into_dynamic (reuses existing logic)
+                // Convert to RGBA pixels
                 let base_img = self.clone().into_dynamic()?;
+                let rgba = base_img.to_rgba8();
+                let (width, height) = rgba.dimensions();
 
                 // Calculate mip visibility mask based on options
                 let mip_visible = if let Some(opts) = mip_options {
-                    let (width, height) = base_img.dimensions();
                     opts.calculate_mip_visible(width, height)
                 } else {
                     // Default: generate all possible mipmaps
                     vec![true; 16]
                 };
 
-                // Encode to BLP
-                Blp::encode_from_image(&base_img, *quality, &mip_visible)
+                // Encode to BLP from RGBA pixels
+                Blp::encode_from_rgba(rgba.as_raw(), width, height, *quality, &mip_visible)
             }
         }
     }

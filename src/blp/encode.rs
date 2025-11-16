@@ -1,4 +1,4 @@
-use crate::blp::{Blp, Frame, MAX_MIPS, TextureType, Version};
+use crate::blp::{Blp, Frame, MAX_MIPS};
 use crate::error::error::BlpError;
 use std::ffi::CStr;
 use turbojpeg::{libc, raw};
@@ -126,39 +126,124 @@ fn rebuild_minimal_jpeg_header(header: &[u8]) -> Result<Vec<u8>, BlpError> {
 }
 
 // ============================================================================
-// Public encoding structures
+// BLP encoding implementation
 // ============================================================================
-
-#[derive(Clone)]
-pub(crate) struct Mip {
-    pub w: u32,
-    pub h: u32,
-    pub visible: bool,
-    pub encode_ms: f64,
-}
-
-pub(crate) struct Ctx {
-    pub bytes: Vec<u8>,
-    pub mips: Vec<Mip>,
-    pub has_alpha: bool,
-    pub encode_ms_total: f64,
-}
 
 /// Create a Blp header from raw RGBA data.
 ///
 /// This is typically used as the first step in BLP encoding.
 impl Blp {
-    pub(crate) fn encode_blp(&self, quality: u8, mip_visible: &[bool], frames: &[Frame], frame_images: &[Option<image::RgbaImage>]) -> Result<Ctx, BlpError> {
+    /// Encode RGBA pixel data to BLP format.
+    ///
+    /// This function:
+    /// 1. Takes raw RGBA pixels and dimensions
+    /// 2. Scales to power-of-two dimensions if needed
+    /// 3. Generates mipmaps according to mip_visible mask
+    /// 4. Encodes to BLP with specified quality
+    ///
+    /// # Arguments
+    /// * `rgba` - Raw RGBA pixel data (width * height * 4 bytes)
+    /// * `width` - Image width
+    /// * `height` - Image height  
+    /// * `quality` - JPEG quality (1-100)
+    /// * `mip_visible` - Mask of which mipmaps to generate (length 16)
+    pub fn encode_from_rgba(rgba: &[u8], width: u32, height: u32, quality: u8, mip_visible: &[bool]) -> Result<Vec<u8>, BlpError> {
         use image::RgbaImage;
-        use std::{ptr, time::Instant};
+
+        /// Round up to the nearest power of two.
+        fn next_pow2(v: u32) -> u32 {
+            if v == 0 {
+                return 1;
+            }
+            let mut n = v - 1;
+            n |= n >> 1;
+            n |= n >> 2;
+            n |= n >> 4;
+            n |= n >> 8;
+            n |= n >> 16;
+            n + 1
+        }
+
+        // Validate input
+        if width == 0 || height == 0 {
+            return Err(BlpError::new("error-image-empty")
+                .with_arg("width", width)
+                .with_arg("height", height));
+        }
+        let expected = (width as usize) * (height as usize) * 4;
+        if rgba.len() != expected {
+            return Err(BlpError::new("error-rgba-buffer-size")
+                .with_arg("expected", expected)
+                .with_arg("actual", rgba.len()));
+        }
+
+        // Create base image
+        let base_rgba = RgbaImage::from_raw(width, height, rgba.to_vec()).ok_or_else(|| BlpError::new("error-rgba-image-creation"))?;
+
+        // Calculate target power-of-two dimensions
+        let target_w = next_pow2(width);
+        let target_h = next_pow2(height);
+
+        // Resize to power-of-two if needed
+        let base_img = if width != target_w || height != target_h {
+            image::imageops::resize(&base_rgba, target_w, target_h, image::imageops::FilterType::Lanczos3)
+        } else {
+            base_rgba
+        };
+
+        // Build power-of-two mip chain
+        let levels = (32 - target_w.max(target_h).leading_zeros()) as usize;
+        let mut frames: Vec<Frame> = Vec::with_capacity(MAX_MIPS);
+        let (mut w, mut h) = (target_w, target_h);
+        for i in 0..MAX_MIPS {
+            if i < levels {
+                frames.push(Frame { width: w, height: h, offset: 0, length: 0 });
+                w = (w / 2).max(1);
+                h = (h / 2).max(1);
+            } else {
+                frames.push(Frame::default());
+            }
+        }
+
+        // Generate mipmaps
+        let mut frame_images: Vec<Option<RgbaImage>> = vec![None; frames.len()];
+        frame_images[0] = Some(base_img.clone());
+
+        let mut prev = base_img;
+        let mut w = target_w;
+        let mut h = target_h;
+
+        for i in 1..frames.len() {
+            if !mip_visible
+                .get(i)
+                .copied()
+                .unwrap_or(true)
+            {
+                break;
+            }
+
+            let next_w = (w / 2).max(1);
+            let next_h = (h / 2).max(1);
+
+            let next_img = image::imageops::resize(&prev, next_w, next_h, image::imageops::FilterType::Lanczos3);
+
+            frame_images[i] = Some(next_img.clone());
+            prev = next_img;
+            w = next_w;
+            h = next_h;
+
+            if w == 1 && h == 1 {
+                break;
+            }
+        }
+
+        // Encode mipmaps to JPEG
+        use std::ptr;
 
         struct WorkMip {
             w: u32,
             h: u32,
-            vis: bool,
-            img: Option<RgbaImage>,
             encoded: Vec<u8>,
-            encode_ms: f64,
         }
 
         let total = frames.len().min(MAX_MIPS);
@@ -179,46 +264,33 @@ impl Blp {
         let mut work: Vec<WorkMip> = Vec::with_capacity(total - start_idx);
         for i in start_idx..total {
             let m = &frames[i];
-            work.push(WorkMip {
-                w: m.width,
-                h: m.height,
-                vis: mip_visible
-                    .get(i)
-                    .copied()
-                    .unwrap_or(true),
-                img: frame_images
+            if !mip_visible
+                .get(i)
+                .copied()
+                .unwrap_or(true)
+                || frame_images
                     .get(i)
                     .cloned()
-                    .unwrap_or(None),
-                encoded: Vec::new(),
-                encode_ms: 0.0,
-            });
+                    .unwrap_or(None)
+                    .is_none()
+            {
+                continue;
+            }
+            work.push(WorkMip { w: m.width, h: m.height, encoded: Vec::new() });
         }
 
-        let base_img_ref = work[0]
-            .img
+        let base_img_ref = frame_images[start_idx]
             .as_ref()
-            .ok_or_else(|| BlpError::new("first_visible_slot_missing_src"))?;
-        if base_img_ref.width() != work[0].w || base_img_ref.height() != work[0].h {
-            return Err(BlpError::new("mip.size_mismatch")
-                .with_arg("want_w", work[0].w)
-                .with_arg("want_h", work[0].h)
-                .with_arg("got_w", base_img_ref.width())
-                .with_arg("got_h", base_img_ref.height()));
-        }
+            .unwrap();
         let has_alpha = base_img_ref
             .pixels()
             .any(|p| p.0[3] != 255);
 
-        let t0 = Instant::now();
-
-        for (_i, wm) in work.iter_mut().enumerate() {
-            if !(wm.vis && wm.img.is_some()) {
-                wm.encoded.clear();
-                wm.encode_ms = 0.0;
-                continue;
-            }
-            let rgba = wm.img.as_ref().unwrap();
+        for (idx, wm) in work.iter_mut().enumerate() {
+            let actual_idx = start_idx + idx;
+            let rgba = frame_images[actual_idx]
+                .as_ref()
+                .unwrap();
             let wz = rgba.width() as usize;
             let hz = rgba.height() as usize;
 
@@ -232,8 +304,6 @@ impl Blp {
 
             let src = rgba.as_raw();
             let (packed, pitch) = if has_alpha { pack_rgba_to_cmyk_fast(src, wz, hz) } else { pack_rgba_to_rgb_fast(src, wz, hz) };
-
-            let t_mip = Instant::now();
 
             let handle = unsafe { raw::tj3Init(raw::TJINIT_TJINIT_COMPRESS as libc::c_int) };
             if handle.is_null() {
@@ -283,10 +353,7 @@ impl Blp {
                 v.extend_from_slice(&jpeg_raw[head_len..]);
                 v
             };
-            wm.encode_ms = t_mip.elapsed().as_secs_f64() * 1000.0;
         }
-
-        let encode_ms_total = t0.elapsed().as_secs_f64() * 1000.0;
 
         if work
             .first()
@@ -296,6 +363,7 @@ impl Blp {
             return Err(BlpError::new("first_visible_slot_missing"));
         }
 
+        // Find common JPEG header
         let mut heads: Vec<&[u8]> = Vec::new();
         for m in &work {
             if m.encoded.is_empty() {
@@ -321,6 +389,7 @@ impl Blp {
             }
         }
 
+        // Build BLP file
         #[inline]
         fn write_u32_le_at(buf: &mut [u8], pos: usize, v: u32) {
             buf[pos..pos + 4].copy_from_slice(&v.to_le_bytes());
@@ -335,8 +404,8 @@ impl Blp {
         bytes.extend_from_slice(b"BLP1");
         bytes.extend_from_slice(&0u32.to_le_bytes());
         bytes.extend_from_slice(&(if has_alpha { 8u32 } else { 0u32 }).to_le_bytes());
-        bytes.extend_from_slice(&work[0].w.to_le_bytes());
-        bytes.extend_from_slice(&work[0].h.to_le_bytes());
+        bytes.extend_from_slice(&target_w.to_le_bytes());
+        bytes.extend_from_slice(&target_h.to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
         bytes.extend_from_slice(&(if visible_count > 1 { 1u32 } else { 0u32 }).to_le_bytes());
 
@@ -353,8 +422,8 @@ impl Blp {
         bytes.extend_from_slice(&common_header);
         bytes.extend_from_slice(b"RAFT");
 
-        for i in 0..MAX_MIPS.min(work.len()) {
-            let m = &work[i];
+        for (idx, m) in work.iter().enumerate() {
+            let i = start_idx + idx;
             if m.encoded.is_empty() {
                 continue;
             }
@@ -390,105 +459,7 @@ impl Blp {
             bytes.extend_from_slice(payload);
         }
 
-        let mut out_mips: Vec<Mip> = Vec::with_capacity(work.len());
-        for wm in &work {
-            out_mips.push(Mip { w: wm.w, h: wm.h, visible: wm.vis, encode_ms: wm.encode_ms });
-        }
-
-        Ok(Ctx { bytes, mips: out_mips, has_alpha, encode_ms_total })
-    }
-
-    /// Encode a DynamicImage to BLP format with mipmaps.
-    ///
-    /// This static method handles the complete BLP encoding pipeline:
-    /// 1. Converts source image to RGBA
-    /// 2. Scales to power-of-two dimensions (upscaling if needed)
-    /// 3. Generates mipmaps according to mip_visible mask
-    /// 4. Encodes to BLP with specified quality
-    pub fn encode_from_image(source: &image::DynamicImage, quality: u8, mip_visible: &[bool]) -> Result<Vec<u8>, BlpError> {
-        use image::RgbaImage;
-
-        /// Round up to the nearest power of two.
-        fn next_pow2(v: u32) -> u32 {
-            if v == 0 {
-                return 1;
-            }
-            let mut n = v - 1;
-            n |= n >> 1;
-            n |= n >> 2;
-            n |= n >> 4;
-            n |= n >> 8;
-            n |= n >> 16;
-            n + 1
-        }
-
-        // Convert to RGBA
-        let rgba = source.to_rgba8();
-        let (src_w, src_h) = rgba.dimensions();
-
-        // Calculate target power-of-two dimensions
-        let target_w = next_pow2(src_w);
-        let target_h = next_pow2(src_h);
-
-        // Resize to power-of-two if needed
-        let base_img = if src_w != target_w || src_h != target_h {
-            image::imageops::resize(&rgba, target_w, target_h, image::imageops::FilterType::Lanczos3)
-        } else {
-            rgba
-        };
-
-        // Create Blp header structure and frames
-        let blp = Blp { version: Version::BLP1, texture_type: TextureType::JPEG, compression: 0, alpha_bits: 0, alpha_type: 0, has_mips: 0, width: target_w, height: target_h, extra: 0, has_mipmaps: 0, holes: 0, header: Frame::default() };
-
-        // Build power-of-two mip chain
-        let levels = (32 - target_w.max(target_h).leading_zeros()) as usize;
-        let mut frames: Vec<Frame> = Vec::with_capacity(MAX_MIPS);
-        let (mut w, mut h) = (target_w, target_h);
-        for i in 0..MAX_MIPS {
-            if i < levels {
-                frames.push(Frame { width: w, height: h, offset: 0, length: 0 });
-                w = (w / 2).max(1);
-                h = (h / 2).max(1);
-            } else {
-                frames.push(Frame::default());
-            }
-        }
-
-        // Generate mipmaps
-        let mut frame_images: Vec<Option<RgbaImage>> = vec![None; frames.len()];
-        frame_images[0] = Some(base_img.clone());
-
-        let mut prev = base_img;
-        let mut w = target_w;
-        let mut h = target_h;
-
-        for i in 1..frames.len() {
-            if !mip_visible
-                .get(i)
-                .copied()
-                .unwrap_or(true)
-            {
-                break;
-            }
-
-            let next_w = (w / 2).max(1);
-            let next_h = (h / 2).max(1);
-
-            let next_img = image::imageops::resize(&prev, next_w, next_h, image::imageops::FilterType::Lanczos3);
-
-            frame_images[i] = Some(next_img.clone());
-            prev = next_img;
-            w = next_w;
-            h = next_h;
-
-            if w == 1 && h == 1 {
-                break;
-            }
-        }
-
-        // Encode to BLP
-        let ctx = blp.encode_blp(quality, mip_visible, &frames, &frame_images)?;
-        Ok(ctx.bytes)
+        Ok(bytes)
     }
 }
 
