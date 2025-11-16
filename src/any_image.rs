@@ -336,7 +336,7 @@ impl AnyImage {
                 }
                 match b.texture_type {
                     blp::TextureType::JPEG => blp::decode::decode_jpeg_frame(b, frame, &self.buf),
-                    blp::TextureType::PALETTE => blp::decode::decode_direct_frame(b, frame, &self.buf),
+                    blp::TextureType::PALETTE => blp::decode::decode_palette_frame(b, frame, &self.buf),
                 }
             }
             AnyImageData::Gif(_) => {
@@ -392,7 +392,7 @@ pub fn decode_to_rgba(buf: &[u8]) -> Result<DynamicImage, BlpError> {
             if frame.length > 0 {
                 let img = match blp.texture_type {
                     blp::TextureType::JPEG => blp::decode::decode_jpeg_frame(&blp, frame, buf)?,
-                    blp::TextureType::PALETTE => blp::decode::decode_direct_frame(&blp, frame, buf)?,
+                    blp::TextureType::PALETTE => blp::decode::decode_palette_frame(&blp, frame, buf)?,
                 };
                 return Ok(DynamicImage::ImageRgba8(img));
             }

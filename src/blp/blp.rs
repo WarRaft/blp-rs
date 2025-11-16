@@ -193,7 +193,7 @@ pub fn from_rgba(rgba: &[u8], width: u32, height: u32) -> Result<(Blp, Vec<Frame
 
 /// Return a slice pointing at the shared JPEG header (if present) without
 /// decoding image pixels.
-pub fn shared_jpeg_header<'a>(buf: &'a [u8]) -> Option<&'a [u8]> {
+pub fn shared_jpeg_header(buf: &[u8]) -> Option<&[u8]> {
     if let Ok((h, _frames)) = parse_header(buf) {
         if let crate::blp::TextureType::JPEG = h.texture_type {
             let off = h.header.offset;
@@ -293,7 +293,7 @@ pub fn open_mipmaps(buf: &[u8]) -> Result<Vec<image::RgbaImage>, BlpError> {
         }
         let rgba = match img.texture_type {
             crate::blp::TextureType::JPEG => crate::blp::decode::decode_jpeg_frame(&img, frame, buf)?,
-            crate::blp::TextureType::PALETTE => crate::blp::decode::decode_direct_frame(&img, frame, buf)?,
+            crate::blp::TextureType::PALETTE => crate::blp::decode::decode_palette_frame(&img, frame, buf)?,
         };
         out.push(rgba);
     }
@@ -324,7 +324,7 @@ impl Blp {
             }
             let result = match self.texture_type {
                 TextureType::JPEG => crate::blp::decode::decode_jpeg_frame(self, frame, buf),
-                TextureType::PALETTE => crate::blp::decode::decode_direct_frame(self, frame, buf),
+                TextureType::PALETTE => crate::blp::decode::decode_palette_frame(self, frame, buf),
             };
             match result {
                 Ok(img) => out.push(Some(img)),

@@ -39,7 +39,7 @@ impl Jpg {
                     }
                     let img = match header.texture_type {
                         TextureType::JPEG => blp::decode::decode_jpeg_frame(&header, frame, buf)?,
-                        TextureType::PALETTE => blp::decode::decode_direct_frame(&header, frame, buf)?,
+                        TextureType::PALETTE => blp::decode::decode_palette_frame(&header, frame, buf)?,
                     };
                     let mut out = Vec::new();
                     let rgb = image::DynamicImage::ImageRgba8(img).to_rgb8();

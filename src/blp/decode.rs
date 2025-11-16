@@ -1,9 +1,9 @@
 use crate::blp::{Blp, Frame};
 use crate::error::error::BlpError;
-use image::RgbaImage;
-use std::io::Cursor;
 use byteorder::{LittleEndian, ReadBytesExt};
+use image::RgbaImage;
 use jpeg_decoder::{Decoder, PixelFormat};
+use std::io::Cursor;
 
 /// Decode a single JPEG-based BLP frame.
 pub fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaImage, BlpError> {
@@ -33,10 +33,15 @@ pub fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaIma
     full.extend_from_slice(tail);
 
     let mut dec = Decoder::new(Cursor::new(&full));
-    dec.read_info().map_err(|e| BlpError::from(e).with_arg("phase", "read_info"))?;
-    let info = dec.info().ok_or_else(|| BlpError::new("jpeg.meta.missing"))?;
+    dec.read_info()
+        .map_err(|e| BlpError::from(e).with_arg("phase", "read_info"))?;
+    let info = dec
+        .info()
+        .ok_or_else(|| BlpError::new("jpeg.meta.missing"))?;
     let (w, h) = (info.width as u32, info.height as u32);
-    let pixels = dec.decode().map_err(|e| BlpError::from(e).with_arg("phase", "decode"))?;
+    let pixels = dec
+        .decode()
+        .map_err(|e| BlpError::from(e).with_arg("phase", "decode"))?;
 
     let mut imgbuf = RgbaImage::new(w, h);
     match info.pixel_format {
@@ -64,7 +69,10 @@ pub fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaIma
             }
         }
         PixelFormat::L16 => {
-            for (chunk, px) in pixels.chunks_exact(2).zip(imgbuf.pixels_mut()) {
+            for (chunk, px) in pixels
+                .chunks_exact(2)
+                .zip(imgbuf.pixels_mut())
+            {
                 let l16 = u16::from_be_bytes([chunk[0], chunk[1]]);
                 let l8 = (l16 / 257) as u8;
                 *px = image::Rgba([l8, l8, l8, 255]);
@@ -75,14 +83,14 @@ pub fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaIma
     Ok(imgbuf)
 }
 
-/// Decode a single DIRECT (paletted) BLP frame.
-pub fn decode_direct_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaImage, BlpError> {
+/// Decode a single PALETTE BLP frame.
+pub fn decode_palette_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaImage, BlpError> {
     use std::io::Read;
-    
+
     if img.header.offset + img.header.length > buf.len() {
         return Err(BlpError::new("direct.header.oob"));
     }
-    
+
     let mut cur = Cursor::new(&buf[..]);
     cur.set_position(img.header.offset as u64);
     let mut palette = [[0u8; 3]; 256];
@@ -97,21 +105,22 @@ pub fn decode_direct_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaI
     let alpha_bits = img.alpha_bits;
     let off = frame.offset;
     let len = frame.length;
-    
+
     if len == 0 {
         return Err(BlpError::new("direct.frame.empty"));
     }
     if off.checked_add(len).is_none() || off + len > buf.len() {
         return Err(BlpError::new("direct.frame.oob"));
     }
-    
+
     cur.set_position(off as u64);
     let (w, h) = (frame.width, frame.height);
     let pixel_count = (w as usize) * (h as usize);
-    
+
     let mut indices = vec![0u8; pixel_count];
-    cur.read_exact(&mut indices).map_err(|_| BlpError::new("direct.indices.truncated"))?;
-    
+    cur.read_exact(&mut indices)
+        .map_err(|_| BlpError::new("direct.indices.truncated"))?;
+
     let alpha_bytes = match alpha_bits {
         0 => 0,
         1 => (pixel_count + 7) / 8,
@@ -119,12 +128,13 @@ pub fn decode_direct_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaI
         8 => pixel_count,
         _ => return Err(BlpError::new("blp.version.invalid").with_arg("msg", "unsupported alpha bits")),
     };
-    
+
     let mut alpha_raw = vec![0u8; alpha_bytes];
     if alpha_bytes > 0 {
-        cur.read_exact(&mut alpha_raw).map_err(|_| BlpError::new("direct.alpha.truncated"))?;
+        cur.read_exact(&mut alpha_raw)
+            .map_err(|_| BlpError::new("direct.alpha.truncated"))?;
     }
-    
+
     let mut out_img = RgbaImage::new(w, h);
     for p in 0..pixel_count {
         let idx = indices[p] as usize;
@@ -144,8 +154,10 @@ pub fn decode_direct_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaI
             8 => alpha_raw[p],
             _ => 255,
         };
-        out_img.get_pixel_mut((p as u32) % w, (p as u32) / w).0 = [r, g, b, a];
+        out_img
+            .get_pixel_mut((p as u32) % w, (p as u32) / w)
+            .0 = [r, g, b, a];
     }
-    
+
     Ok(out_img)
 }
