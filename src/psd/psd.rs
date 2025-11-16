@@ -56,7 +56,7 @@ impl FormatDetector for PsdImage {
 }
 
 impl crate::traits::ImageDecoder for PsdImage {
-    fn to_dynamic(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
+    fn into_dynamic(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
         PsdImage::decode_as_dynamic(buf)
     }
 }

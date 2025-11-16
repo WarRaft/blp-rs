@@ -48,7 +48,16 @@ impl Jpg {
                     Ok(out)
                 } else {
                     // No quality arg — detect the external format and convert.
-                    let dynimg = crate::blp::decode_to_rgba(buf)?;
+                    use crate::traits::{FormatDetector, ImageDecoder};
+                    
+                    let dynimg = if blp::Blp::detect(buf) {
+                        blp::Blp::into_dynamic(buf)?
+                    } else if crate::psd::PsdImage::detect(buf) {
+                        crate::psd::PsdImage::into_dynamic(buf)?
+                    } else {
+                        image::load_from_memory(buf).map_err(|_| BlpError::new("error-image-load"))?
+                    };
+                    
                     let img = dynimg.to_rgba8();
                     let mut out = Vec::new();
                     let rgb = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();

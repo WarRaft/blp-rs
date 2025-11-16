@@ -1,8 +1,8 @@
 use crate::blp::{self, Blp, Frame};
 use crate::error::error::BlpError;
-use crate::traits::FormatDetector;
 use crate::gif::Gif;
 use crate::psd::PsdImage;
+use crate::traits::FormatDetector;
 use image::GenericImageView;
 use image::{DynamicImage, RgbaImage};
 
@@ -39,12 +39,12 @@ pub struct EncodeMipOptions {
     /// Maximum number of mipmaps to generate (None = all possible mipmaps).
     /// Ignored if `specific_mips` is set.
     pub mip_count: Option<usize>,
-    
+
     /// Minimum size of the smallest dimension before stopping mipmap generation.
     /// For example, `Some(16)` stops when width or height reaches 16px.
     /// Ignored if `specific_mips` is set.
     pub min_size: Option<u32>,
-    
+
     /// Direct control: boolean array where `true` = generate this mip level.
     /// Length determines max mips. Overrides `mip_count` and `min_size`.
     /// Example: `vec![true, true, false, true]` generates mips 0, 1, and 3.
@@ -104,7 +104,7 @@ pub enum EncodeOptions {
     /// Export as JPEG with quality (0-100)
     Jpeg { quality: u8 },
     /// Export as BLP
-    Blp { 
+    Blp {
         quality: u8,
         /// Mipmap generation options (None = generate all possible mipmaps)
         mip_options: Option<EncodeMipOptions>,
@@ -213,15 +213,24 @@ impl AnyImage {
             AnyImageData::Blp(b) => (b.width, b.height),
             _ => {
                 let frame = self.frames.get(0);
-                (
-                    frame.map(|f| f.width).unwrap_or(0),
-                    frame.map(|f| f.height).unwrap_or(0),
-                )
+                (frame.map(|f| f.width).unwrap_or(0), frame.map(|f| f.height).unwrap_or(0))
             }
         }
     }
 
     /// Encode the image to bytes according to the specified options.
+    ///
+    /// This is the single point of export for all image formats.
+    ///
+    /// # BLP Encoding Behavior
+    ///
+    /// When encoding to BLP format, the function automatically:
+    /// - Converts the source image to RGBA
+    /// - Scales to power-of-two dimensions (upscaling if necessary)
+    /// - Generates mipmaps according to `mip_options`
+    /// - Encodes all mipmaps with the specified quality
+    ///
+    /// For raw JPEG extraction from BLP sources, use `raw: Some(mip_index)`.
     pub fn encode(&self, opts: &EncodeOptions) -> Result<Vec<u8>, BlpError> {
         match opts {
             EncodeOptions::Png { compression } => {
@@ -229,28 +238,14 @@ impl AnyImage {
                 let mut bytes = Vec::new();
                 if compression.is_some() {
                     // Use custom compression settings
-                    let encoder = image::codecs::png::PngEncoder::new_with_quality(
-                        &mut bytes,
-                        image::codecs::png::CompressionType::Default,
-                        image::codecs::png::FilterType::Sub,
-                    );
+                    let encoder = image::codecs::png::PngEncoder::new_with_quality(&mut bytes, image::codecs::png::CompressionType::Default, image::codecs::png::FilterType::Sub);
                     use image::ImageEncoder;
-                    encoder.write_image(
-                        img.as_bytes(),
-                        img.width(),
-                        img.height(),
-                        img.color().into(),
-                    )?;
+                    encoder.write_image(img.as_bytes(), img.width(), img.height(), img.color().into())?;
                 } else {
                     // Use default encoder
                     let encoder = image::codecs::png::PngEncoder::new(&mut bytes);
                     use image::ImageEncoder;
-                    encoder.write_image(
-                        img.as_bytes(),
-                        img.width(),
-                        img.height(),
-                        img.color().into(),
-                    )?;
+                    encoder.write_image(img.as_bytes(), img.width(), img.height(), img.color().into())?;
                 }
                 Ok(bytes)
             }
@@ -260,61 +255,43 @@ impl AnyImage {
                 let mut bytes = Vec::new();
                 let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, *quality);
                 use image::ImageEncoder;
-                encoder.write_image(
-                    rgb.as_raw(),
-                    rgb.width(),
-                    rgb.height(),
-                    image::ColorType::Rgb8.into(),
-                )?;
+                encoder.write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ColorType::Rgb8.into())?;
                 Ok(bytes)
             }
             EncodeOptions::Blp { quality, mip_options, raw } => {
                 // Check if we need raw JPEG extraction from BLP
                 if let Some(mip_index) = raw {
                     // Raw extraction only works for BLP sources
-                    match &self.data {
+                    return match &self.data {
                         AnyImageData::Blp(blp) => {
                             if blp.texture_type != blp::TextureType::JPEG {
                                 return Err(BlpError::new("blp.raw-export-not-jpeg"));
                             }
-                            let hdr = blp::shared_jpeg_header(&self.buf)
-                                .ok_or_else(|| BlpError::new("jpeg.shared_header_missing"))?;
-                            let mip = blp::mip_raw(&self.buf, *mip_index)
-                                .ok_or_else(|| BlpError::new("jpeg.mip_missing"))?;
+                            let hdr = blp::shared_jpeg_header(&self.buf).ok_or_else(|| BlpError::new("jpeg.shared_header_missing"))?;
+                            let mip = blp::mip_raw(&self.buf, *mip_index).ok_or_else(|| BlpError::new("jpeg.mip_missing"))?;
                             let mut out = Vec::with_capacity(hdr.len() + mip.len());
                             out.extend_from_slice(hdr);
                             out.extend_from_slice(mip);
-                            return Ok(out);
+                            Ok(out)
                         }
-                        _ => return Err(BlpError::new("blp.raw-export-requires-blp-source")),
-                    }
+                        _ => Err(BlpError::new("blp.raw-export-requires-blp-source")),
+                    };
                 }
 
-                // Generate BLP from any image format
-                use crate::traits::ImageDecoder;
-                let base_img = match &self.data {
-                    AnyImageData::Blp(_) => Blp::to_dynamic(&self.buf)?,
-                    AnyImageData::Gif(_) => Gif::to_dynamic(&self.buf)?,
-                    AnyImageData::Psd(_) => PsdImage::to_dynamic(&self.buf)?,
-                    AnyImageData::Image => image::load_from_memory(&self.buf)
-                        .map_err(|_| BlpError::new("error-image-load"))?,
-                };
+                // Get base image using into_dynamic (reuses existing logic)
+                let base_img = self.clone().into_dynamic()?;
 
-                let rgba = base_img.to_rgba8();
-                let (width, height) = rgba.dimensions();
-                let raw_pixels = rgba.into_raw();
-
-                // Generate mipmaps based on options
+                // Calculate mip visibility mask based on options
                 let mip_visible = if let Some(opts) = mip_options {
-                    // Use EncodeMipOptions to determine which mips to generate
                     if let Some(ref specific) = opts.specific_mips {
                         // Direct specification
                         specific.clone()
                     } else {
                         // Calculate based on mip_count or min_size
+                        let (width, height) = base_img.dimensions();
                         let max_mips = (32 - width.max(height).leading_zeros()) as usize;
                         let mut visible = vec![false; 16];
-                        
+
                         let mut w = width;
                         let mut h = height;
                         for i in 0..max_mips.min(16) {
@@ -325,7 +302,7 @@ impl AnyImage {
                             } else {
                                 true // Generate all
                             };
-                            
+
                             visible[i] = should_generate;
                             if !should_generate {
                                 break;
@@ -340,8 +317,8 @@ impl AnyImage {
                     vec![true; 16]
                 };
 
-                // Encode to BLP bytes
-                blp::encode_rgba_to_blp(&raw_pixels, width, height, *quality, &mip_visible)
+                // Encode to BLP
+                Blp::encode_from_image(&base_img, *quality, &mip_visible)
             }
         }
     }
@@ -352,11 +329,10 @@ impl AnyImage {
     pub fn into_dynamic(self) -> Result<DynamicImage, BlpError> {
         use crate::traits::ImageDecoder;
         match self.data {
-            AnyImageData::Blp(_) => Blp::to_dynamic(&self.buf),
-            AnyImageData::Gif(_) => Gif::to_dynamic(&self.buf),
-            AnyImageData::Psd(_) => PsdImage::to_dynamic(&self.buf),
-            AnyImageData::Image => image::load_from_memory(&self.buf)
-                .map_err(|_| BlpError::new("error-image-load")),
+            AnyImageData::Blp(_) => Blp::into_dynamic(&self.buf),
+            AnyImageData::Gif(_) => Gif::into_dynamic(&self.buf),
+            AnyImageData::Psd(_) => PsdImage::into_dynamic(&self.buf),
+            AnyImageData::Image => image::load_from_memory(&self.buf).map_err(|_| BlpError::new("error-image-load")),
         }
     }
 
@@ -406,31 +382,6 @@ impl AnyImage {
                 let img = image::load_from_memory(&self.buf)?.to_rgba8();
                 if idx == 0 { Ok(img) } else { Err(BlpError::new("error-frame-oob").with_arg("idx", idx as u32)) }
             }
-        }
-    }
-
-    /// If this is a BLP, return metadata; otherwise None.
-    /// Return parsed BLP header as the new `blp::Blp` struct if buffer is BLP.
-    pub fn blp_meta(&self) -> Option<Blp> {
-        match &self.data {
-            AnyImageData::Blp(b) => Some(b.clone()),
-            _ => None,
-        }
-    }
-
-    /// For BLP images return the shared JPEG header slice if present.
-    pub fn shared_jpeg_header(&self) -> Option<&[u8]> {
-        match &self.data {
-            AnyImageData::Blp(_) => blp::shared_jpeg_header(&self.buf),
-            _ => None,
-        }
-    }
-
-    /// For BLP images return raw mip payload for index.
-    pub fn mip_raw(&self, idx: usize) -> Option<&[u8]> {
-        match &self.data {
-            AnyImageData::Blp(_) => blp::mip_raw(&self.buf, idx),
-            _ => None,
         }
     }
 }

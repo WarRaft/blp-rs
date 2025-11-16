@@ -1,9 +1,9 @@
-use crate::blp::{Blp, MAX_MIPS};
-use crate::error::error::BlpError;
 use crate::blp::encode_utils::pack_rgba_to_cmyk_fast::pack_rgba_to_cmyk_fast;
 use crate::blp::encode_utils::pack_rgba_to_rgb_fast::pack_rgba_to_rgb_fast;
 use crate::blp::encode_utils::read_be_u16::read_be_u16;
 use crate::blp::encode_utils::rebuild_minimal_jpeg_header::rebuild_minimal_jpeg_header;
+use crate::blp::{Blp, MAX_MIPS};
+use crate::error::error::BlpError;
 use std::ffi::CStr;
 use turbojpeg::{libc, raw};
 
@@ -38,12 +38,16 @@ impl Blp {
 
         let total = frames.len().min(MAX_MIPS);
         let start_idx = (0..total)
-                .find(|&i| {
+            .find(|&i| {
                 mip_visible
                     .get(i)
                     .copied()
                     .unwrap_or(true)
-                    && frame_images.get(i).cloned().unwrap_or(None).is_some()
+                    && frame_images
+                        .get(i)
+                        .cloned()
+                        .unwrap_or(None)
+                        .is_some()
             })
             .ok_or_else(|| BlpError::new("no_visible_mips_after_mask"))?;
 
@@ -57,7 +61,10 @@ impl Blp {
                     .get(i)
                     .copied()
                     .unwrap_or(true),
-                img: frame_images.get(i).cloned().unwrap_or(None),
+                img: frame_images
+                    .get(i)
+                    .cloned()
+                    .unwrap_or(None),
                 encoded: Vec::new(),
                 encode_ms: 0.0,
             });
@@ -74,7 +81,9 @@ impl Blp {
                 .with_arg("got_w", base_img_ref.width())
                 .with_arg("got_h", base_img_ref.height()));
         }
-        let has_alpha = base_img_ref.pixels().any(|p| p.0[3] != 255);
+        let has_alpha = base_img_ref
+            .pixels()
+            .any(|p| p.0[3] != 255);
 
         let t0 = Instant::now();
 
@@ -97,11 +106,7 @@ impl Blp {
             }
 
             let src = rgba.as_raw();
-            let (packed, pitch) = if has_alpha {
-                pack_rgba_to_cmyk_fast(src, wz, hz)
-            } else {
-                pack_rgba_to_rgb_fast(src, wz, hz)
-            };
+            let (packed, pitch) = if has_alpha { pack_rgba_to_cmyk_fast(src, wz, hz) } else { pack_rgba_to_rgb_fast(src, wz, hz) };
 
             let t_mip = Instant::now();
 
@@ -129,27 +134,13 @@ impl Blp {
                 if raw::tj3Set(handle, raw::TJPARAM_TJPARAM_OPTIMIZE as libc::c_int, 0) != 0 {
                     return Err(tj3_err(handle, "tj3.optimize"));
                 }
-                if raw::tj3Set(
-                    handle, 
-                    raw::TJPARAM_TJPARAM_COLORSPACE as libc::c_int,
-                    if has_alpha { raw::TJCS_TJCS_CMYK } else { raw::TJCS_TJCS_RGB } as libc::c_int,
-                ) != 0
-                {
+                if raw::tj3Set(handle, raw::TJPARAM_TJPARAM_COLORSPACE as libc::c_int, if has_alpha { raw::TJCS_TJCS_CMYK } else { raw::TJCS_TJCS_RGB } as libc::c_int) != 0 {
                     return Err(tj3_err(handle, "tj3.colorspace"));
                 }
 
                 let mut out_ptr: *mut libc::c_uchar = ptr::null_mut();
                 let mut out_size: raw::size_t = 0;
-                let r = raw::tj3Compress8(
-                    handle, 
-                    packed.as_ptr(),
-                    wz as libc::c_int,
-                    pitch as libc::c_int,
-                    hz as libc::c_int,
-                    if has_alpha { raw::TJPF_TJPF_CMYK } else { raw::TJPF_TJPF_BGR } as libc::c_int,
-                    &mut out_ptr,
-                    &mut out_size,
-                );
+                let r = raw::tj3Compress8(handle, packed.as_ptr(), wz as libc::c_int, pitch as libc::c_int, hz as libc::c_int, if has_alpha { raw::TJPF_TJPF_CMYK } else { raw::TJPF_TJPF_BGR } as libc::c_int, &mut out_ptr, &mut out_size);
                 if r != 0 {
                     return Err(tj3_err(handle, "tj3.compress"));
                 }
@@ -217,7 +208,7 @@ impl Blp {
 
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"BLP1");
-        bytes.extend_from_slice(&0u32.to_le_bytes()); 
+        bytes.extend_from_slice(&0u32.to_le_bytes());
         bytes.extend_from_slice(&(if has_alpha { 8u32 } else { 0u32 }).to_le_bytes());
         bytes.extend_from_slice(&work[0].w.to_le_bytes());
         bytes.extend_from_slice(&work[0].h.to_le_bytes());
@@ -284,14 +275,22 @@ impl Blp {
 }
 
 fn header_prefix(heads: &[&[u8]]) -> Vec<u8> {
-    if heads.is_empty() { return Vec::new(); }
-    let min_len = heads.iter().map(|h| h.len()).min().unwrap_or(0);
+    if heads.is_empty() {
+        return Vec::new();
+    }
+    let min_len = heads
+        .iter()
+        .map(|h| h.len())
+        .min()
+        .unwrap_or(0);
     let mut out = Vec::with_capacity(min_len);
     for i in 0..min_len {
         let b = heads[0][i];
         if heads.iter().all(|h| h[i] == b) {
             out.push(b);
-        } else { break; }
+        } else {
+            break;
+        }
     }
     out
 }
@@ -299,44 +298,69 @@ fn header_prefix(heads: &[&[u8]]) -> Vec<u8> {
 fn tj3_err(handle: raw::tjhandle, key: &'static str) -> BlpError {
     let msg = unsafe {
         let p = raw::tj3GetErrorStr(handle);
-        if p.is_null() { "unknown".to_string() } else { CStr::from_ptr(p).to_string_lossy().into_owned() }
+        if p.is_null() {
+            "unknown".to_string()
+        } else {
+            CStr::from_ptr(p)
+                .to_string_lossy()
+                .into_owned()
+        }
     };
     BlpError::new(key).with_arg("msg", msg)
 }
 
 fn split_header_and_scan(jpeg: &[u8]) -> Result<(usize, usize), BlpError> {
-    if jpeg.len() < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8 { return Err(BlpError::new("jpeg.bad_soi")); }
+    if jpeg.len() < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8 {
+        return Err(BlpError::new("jpeg.bad_soi"));
+    }
     let mut i = 2usize;
     loop {
-        while i < jpeg.len() && jpeg[i] == 0xFF { i += 1; }
-        if i >= jpeg.len() { return Err(BlpError::new("jpeg.truncated")); }
+        while i < jpeg.len() && jpeg[i] == 0xFF {
+            i += 1;
+        }
+        if i >= jpeg.len() {
+            return Err(BlpError::new("jpeg.truncated"));
+        }
         let m = jpeg[i];
         i += 1;
         match m {
             0xD9 => return Err(BlpError::new("jpeg.eoi_before_sos")),
-            0xD0..=0xD7 | 0x01 => {},
+            0xD0..=0xD7 | 0x01 => {}
             0xDA => {
-                if i + 2 > jpeg.len() { return Err(BlpError::new("jpeg.sos_len")); }
+                if i + 2 > jpeg.len() {
+                    return Err(BlpError::new("jpeg.sos_len"));
+                }
                 let seg_len = read_be_u16(&jpeg[i..i + 2])? as usize;
                 let seg_end = i + seg_len;
-                if seg_end > jpeg.len() { return Err(BlpError::new("jpeg.sos_trunc")); }
+                if seg_end > jpeg.len() {
+                    return Err(BlpError::new("jpeg.sos_trunc"));
+                }
                 let head_len = seg_end;
                 let mut j = head_len;
                 while j + 1 < jpeg.len() {
                     if jpeg[j] == 0xFF {
                         let n = jpeg[j + 1];
-                        if n == 0x00 || (0xD0..=0xD7).contains(&n) { j += 2; continue; }
-                        if n == 0xD9 { return Ok((head_len, j - head_len)); }
+                        if n == 0x00 || (0xD0..=0xD7).contains(&n) {
+                            j += 2;
+                            continue;
+                        }
+                        if n == 0xD9 {
+                            return Ok((head_len, j - head_len));
+                        }
                     }
                     j += 1;
                 }
                 return Err(BlpError::new("jpeg.eoi_not_found"));
             }
             _ => {
-                if i + 2 > jpeg.len() { return Err(BlpError::new("jpeg.seg_len")); }
+                if i + 2 > jpeg.len() {
+                    return Err(BlpError::new("jpeg.seg_len"));
+                }
                 let seg_len = read_be_u16(&jpeg[i..i + 2])? as usize;
                 let seg_end = i + seg_len;
-                if seg_end > jpeg.len() { return Err(BlpError::new("jpeg.seg_trunc")); }
+                if seg_end > jpeg.len() {
+                    return Err(BlpError::new("jpeg.seg_trunc"));
+                }
                 i = seg_end;
             }
         }

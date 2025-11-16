@@ -21,5 +21,5 @@ pub trait ImageDecoder {
     /// For PSD: composites all layers.
     /// For GIF: returns the first frame.
     /// For standard images: returns the decoded image.
-    fn to_dynamic(buf: &[u8]) -> Result<DynamicImage, BlpError>;
+    fn into_dynamic(buf: &[u8]) -> Result<DynamicImage, BlpError>;
 }

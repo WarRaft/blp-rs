@@ -62,7 +62,7 @@ impl FormatDetector for Gif {
 }
 
 impl crate::traits::ImageDecoder for Gif {
-    fn to_dynamic(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
+    fn into_dynamic(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
         // Return the first frame as DynamicImage
         let frames = Gif::decode_frames(buf)?;
         if let Some(first) = frames.into_iter().next() {
