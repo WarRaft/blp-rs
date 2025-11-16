@@ -192,23 +192,35 @@ pub fn from_rgba(rgba: &[u8], width: u32, height: u32) -> Result<(Blp, Vec<Frame
     Ok((blp, frames))
 }
 
-/// Return a slice pointing at the shared JPEG header (if present) without
-/// decoding image pixels.
-pub fn shared_jpeg_header(buf: &[u8]) -> Option<&[u8]> {
+/// Return header data (JPEG header for JPEG type, palette for PALETTE type).
+/// 
+/// For JPEG textures: returns shared JPEG header.
+/// For PALETTE textures: returns palette bytes (256 RGBA entries, 1024 bytes total).
+pub fn header_data(buf: &[u8]) -> Option<&[u8]> {
     if let Ok((h, _frames)) = parse_header(buf) {
-        if let TextureType::JPEG = h.texture_type {
-            let off = h.header.offset;
-            let len = h.header.length;
-            if off.checked_add(len).is_some() && off + len <= buf.len() {
-                return Some(&buf[off..off + len]);
-            }
+        let off = h.header.offset;
+        let len = h.header.length;
+        if off.checked_add(len).is_some() && off + len <= buf.len() {
+            return Some(&buf[off..off + len]);
         }
     }
     None
 }
 
+/// Deprecated: Use `header_data` instead.
+#[deprecated(since = "1.1.0", note = "Use `header_data` instead")]
+pub fn shared_jpeg_header(buf: &[u8]) -> Option<&[u8]> {
+    header_data(buf)
+}
+
+/// Deprecated: Use `header_data` instead.
+#[deprecated(since = "1.1.0", note = "Use `header_data` instead")]
+pub fn palette_bytes(buf: &[u8]) -> Option<&[u8]> {
+    header_data(buf)
+}
+
 /// Return the raw payload for a given mip index (no decoding).
-pub fn mip_raw<'a>(buf: &'a [u8], mip_index: usize) -> Option<&'a [u8]> {
+pub fn mip_raw(buf: &[u8], mip_index: usize) -> Option<&[u8]> {
     if let Ok((_h, frames)) = parse_header(buf) {
         if mip_index >= frames.len() {
             return None;
@@ -271,21 +283,6 @@ pub fn inspect_buf(buf: &[u8]) -> Result<BlpMeta, BlpError> {
 pub fn inspect_image_dimensions(buf: &[u8]) -> Result<(u32, u32), BlpError> {
     let (h, _frames) = parse_header(buf)?;
     Ok((h.width, h.height))
-}
-
-/// For DIRECT (paletted) textures, return the palette bytes if present.
-/// Palette layout: sequence of 256 RGBA entries (1024 bytes) starting at header_offset.
-pub fn palette_bytes<'a>(buf: &'a [u8]) -> Option<&'a [u8]> {
-    if let Ok((h, _frames)) = parse_header(buf) {
-        if let TextureType::PALETTE = h.texture_type {
-            let off = h.header.offset;
-            let len = h.header.length;
-            if off.checked_add(len).is_some() && off + len <= buf.len() {
-                return Some(&buf[off..off + len]);
-            }
-        }
-    }
-    None
 }
 
 /// For BLP files return all mipmaps as owned `RgbaImage`s.

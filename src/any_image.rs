@@ -6,52 +6,31 @@ use crate::traits::FormatDetector;
 use image::GenericImageView;
 use image::{DynamicImage, RgbaImage};
 
-/// Mipmap generation options for BLP encoding.
-///
-/// Allows precise control over which mipmaps to generate. Options are evaluated
-/// in priority order: `specific_mips` > `min_size` > `mip_count`.
-///
-/// # Examples
-///
-/// ```no_run
-/// use blp::any_image::EncodeMipOptions;
-///
-/// // Generate first 4 mipmaps
-/// let opts = EncodeMipOptions {
-///     mip_count: Some(4),
-///     ..Default::default()
-/// };
-///
-/// // Stop generating when smallest side reaches 16px
-/// let opts = EncodeMipOptions {
-///     min_size: Some(16),
-///     ..Default::default()
-/// };
-///
-/// // Generate specific mipmaps only (e.g., mips 0, 2, 4)
-/// let opts = EncodeMipOptions {
-///     specific_mips: Some(vec![true, false, true, false, true]),
-///     ..Default::default()
-/// };
-/// ```
+/// Configuration for BLP mipmap generation.
+/// 
+/// You can either:
+/// - Specify `mip_count` to generate a fixed number of mipmaps
+/// - Specify `min_size` to generate mipmaps until the smallest dimension reaches this size
+/// - Specify `specific_mips` to explicitly control which mip levels to generate
+/// - Leave all `None` to generate all possible mipmaps
+/// 
+/// Color quantization settings (for palette-based compression):
+/// - `quantize_colors`: Number of colors in palette (1-256, None = no quantization, use JPEG)
+/// - `quantize_dither`: Enable dithering for better quality at lower color counts
 #[derive(Debug, Clone, Default)]
 pub struct EncodeMipOptions {
-    /// Maximum number of mipmaps to generate (None = all possible mipmaps).
-    /// Ignored if `specific_mips` is set.
+    /// Number of mipmap levels to generate (including base level)
     pub mip_count: Option<usize>,
-
-    /// Minimum size of the smallest dimension before stopping mipmap generation.
-    /// For example, `Some(16)` stops when width or height reaches 16px.
-    /// Ignored if `specific_mips` is set.
+    /// Minimum dimension (width or height) for mipmap generation
     pub min_size: Option<u32>,
-
-    /// Direct control: boolean array where `true` = generate this mip level.
-    /// Length determines max mips. Overrides `mip_count` and `min_size`.
-    /// Example: `vec![true, true, false, true]` generates mips 0, 1, and 3.
+    /// Explicit control: vec[i] = true means generate mip i
     pub specific_mips: Option<Vec<bool>>,
-}
-
-/// Encoding options for AnyImage export.
+    /// Number of colors for palette quantization (1-256). If set, uses PALETTE texture type.
+    /// If None, uses JPEG texture type.
+    pub quantize_colors: Option<u8>,
+    /// Enable dithering when quantizing colors (reduces banding artifacts)
+    pub quantize_dither: bool,
+}/// Encoding options for AnyImage export.
 ///
 /// # Examples
 ///
@@ -82,6 +61,8 @@ pub struct EncodeMipOptions {
 ///         mip_count: Some(4), // Only first 4 mipmaps
 ///         min_size: None,
 ///         specific_mips: None,
+///         quantize_colors: None,
+///         quantize_dither: false,
 ///     }),
 ///     raw: None,
 /// })?;
@@ -267,7 +248,7 @@ impl AnyImage {
                             if blp.texture_type != blp::TextureType::JPEG {
                                 return Err(BlpError::new("blp.raw-export-not-jpeg"));
                             }
-                            let hdr = blp::shared_jpeg_header(&self.buf).ok_or_else(|| BlpError::new("jpeg.shared_header_missing"))?;
+                            let hdr = blp::header_data(&self.buf).ok_or_else(|| BlpError::new("jpeg.shared_header_missing"))?;
                             let mip = blp::mip_raw(&self.buf, *mip_index).ok_or_else(|| BlpError::new("jpeg.mip_missing"))?;
                             let mut out = Vec::with_capacity(hdr.len() + mip.len());
                             out.extend_from_slice(hdr);

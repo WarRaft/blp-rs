@@ -17,7 +17,7 @@ impl Jpg {
                 let (h, _frames) = blp::parse_header(buf)?;
                 match h.texture_type {
                     blp::TextureType::JPEG => {
-                        let hdr = blp::shared_jpeg_header(buf).ok_or_else(|| BlpError::new("jpeg.shared_header_missing"))?;
+                        let hdr = blp::header_data(buf).ok_or_else(|| BlpError::new("jpeg.shared_header_missing"))?;
                         let mip = blp::mip_raw(buf, frame_idx).ok_or_else(|| BlpError::new("jpeg.mip_missing"))?;
                         let mut out = Vec::with_capacity(hdr.len() + mip.len());
                         out.extend_from_slice(hdr);
