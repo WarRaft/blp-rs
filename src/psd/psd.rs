@@ -11,16 +11,15 @@ use crate::format_detector::FormatDetector;
 pub struct PsdImage {
     pub width: u32,
     pub height: u32,
-    pub frames: Vec<Frame>,
 }
 
 impl PsdImage {
-    pub fn parse_header(buf: &[u8]) -> Result<Self, BlpError> {
+    pub fn parse_header(buf: &[u8]) -> Result<(Self, Vec<Frame>), BlpError> {
         let psd = Psd::from_bytes(buf).map_err(|e| BlpError::new("psd-parse").with_arg("error", e.to_string()))?;
         let w = psd.width();
         let h = psd.height();
         let frames = vec![Frame { width: w, height: h, offset: 0, length: buf.len() }];
-        Ok(PsdImage { width: w, height: h, frames })
+        Ok((PsdImage { width: w, height: h }, frames))
     }
 
     pub fn decode_frames(buf: &[u8]) -> Result<Vec<RgbaImage>, BlpError> {
@@ -51,7 +50,7 @@ impl FormatDetector for PsdImage {
         buf.len() >= 4 && &buf[0..4] == b"8BPS"
     }
 
-    fn parse_header(buf: &[u8]) -> Result<Self, BlpError> {
+    fn parse_header(buf: &[u8]) -> Result<(Self, Vec<Frame>), BlpError> {
         PsdImage::parse_header(buf)
     }
 }

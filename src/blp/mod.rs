@@ -13,5 +13,5 @@ pub use helpers::{encode_rgba_to_blp_bytes, encode_mipmaps_to_blp_bytes, encode_
 pub mod options;
 pub use options::{EncodeOptions, MipSelection, RescalePolicy};
 pub mod decode;
-pub use decode::{decode_jpeg_to_mipmaps, decode_direct_to_mipmaps};
+pub use decode::{decode_jpeg_frame, decode_direct_frame};
 pub mod export;

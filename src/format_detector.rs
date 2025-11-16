@@ -1,4 +1,5 @@
 use crate::error::error::BlpError;
+use crate::blp::Frame;
 
 /// Trait to detect & parse headers cheaply for supported formats.
 /// Implementations should be light and must not store the full payload (heavy bytes)
@@ -7,6 +8,6 @@ pub trait FormatDetector: Sized {
     /// Cheap detection that must not allocate but look for format signatures.
     fn detect(buf: &[u8]) -> bool;
 
-    /// Parse header and return a format-specific metadata container.
-    fn parse_header(buf: &[u8]) -> Result<Self, BlpError>;
+    /// Parse header and return a format-specific metadata container along with frames.
+    fn parse_header(buf: &[u8]) -> Result<(Self, Vec<Frame>), BlpError>;
 }

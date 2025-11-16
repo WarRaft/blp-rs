@@ -10,12 +10,11 @@ use crate::format_detector::FormatDetector;
 pub struct Gif {
     pub width: u32,
     pub height: u32,
-    pub frames: Vec<Frame>,
 }
 
 impl Gif {
     /// Parse the GIF into frame metadata (dimensions + placeholder offsets).
-    pub fn parse_header(buf: &[u8]) -> Result<Self, BlpError> {
+    pub fn parse_header(buf: &[u8]) -> Result<(Self, Vec<Frame>), BlpError> {
         let decoder = image::codecs::gif::GifDecoder::new(Cursor::new(buf))?;
         let frames = decoder.into_frames();
         let collected = frames.collect_frames()?;
@@ -30,7 +29,7 @@ impl Gif {
             let (w, h) = first.buffer().dimensions();
             (w, h)
         } else { (0, 0) };
-        Ok(Gif { width: w, height: h, frames: meta })
+        Ok((Gif { width: w, height: h }, meta))
     }
 
     /// Fully decode all frames in the GIF payload into owned RGBA images.
@@ -57,7 +56,7 @@ impl FormatDetector for Gif {
         buf.len() >= 6 && (&buf[0..6] == b"GIF89a" || &buf[0..6] == b"GIF87a")
     }
 
-    fn parse_header(buf: &[u8]) -> Result<Self, BlpError> {
+    fn parse_header(buf: &[u8]) -> Result<(Self, Vec<Frame>), BlpError> {
         Gif::parse_header(buf)
     }
 }

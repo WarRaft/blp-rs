@@ -44,18 +44,18 @@ impl AnyImage {
     pub fn from_buffer(buf: &[u8]) -> Result<Self, BlpError> {
         // Use trait-based detectors — explicit ordering matters (BLP first)
         if blp::Blp::detect(buf) {
-            let blp_hdr = blp::parse_header(buf)?;
-            return Ok(AnyImage { data: AnyImageData::Blp(blp_hdr.clone()), buf: buf.to_vec(), frames: blp_hdr.frames.clone() });
+            let (blp_hdr, frames) = blp::parse_header(buf)?;
+            return Ok(AnyImage { data: AnyImageData::Blp(blp_hdr), buf: buf.to_vec(), frames });
         }
 
         if Gif::detect(buf) {
-            let gif_meta = Gif::parse_header(buf)?;
-            return Ok(AnyImage { data: AnyImageData::Gif(gif_meta.clone()), buf: buf.to_vec(), frames: gif_meta.frames });
+            let (gif_meta, frames) = Gif::parse_header(buf)?;
+            return Ok(AnyImage { data: AnyImageData::Gif(gif_meta), buf: buf.to_vec(), frames });
         }
 
         if PsdImage::detect(buf) {
-            let psd_meta = PsdImage::parse_header(buf)?;
-            return Ok(AnyImage { data: AnyImageData::Psd(psd_meta.clone()), buf: buf.to_vec(), frames: psd_meta.frames });
+            let (psd_meta, frames) = PsdImage::parse_header(buf)?;
+            return Ok(AnyImage { data: AnyImageData::Psd(psd_meta), buf: buf.to_vec(), frames });
         }
 
         // Other image formats (single frame)
@@ -131,18 +131,13 @@ impl AnyImage {
         match &self.data {
             AnyImageData::Blp(b) => {
                 // Use BLP internal decoders targeted to the single index
-                let mut mask = [false; 16];
-                if idx < mask.len() {
-                    mask[idx] = true;
+                let frame = self.frames.get(idx).ok_or_else(|| BlpError::new("error-frame-oob").with_arg("idx", idx as u32))?;
+                if frame.length == 0 {
+                    return Err(BlpError::new("error-blp-no-mipmap"));
                 }
-                let decoded = match b.texture_type {
-                    crate::blp::TextureType::JPEG => crate::blp::decode::decode_jpeg_to_mipmaps(b, &self.buf, &mask)?,
-                    crate::blp::TextureType::PALETTE => crate::blp::decode::decode_direct_to_mipmaps(b, &self.buf, &mask)?,
-                };
-                if let Some(Some(img)) = decoded.into_iter().nth(idx) {
-                    Ok(img)
-                } else {
-                    Err(BlpError::new("error-blp-no-mipmap"))
+                match b.texture_type {
+                    crate::blp::TextureType::JPEG => crate::blp::decode::decode_jpeg_frame(b, frame, &self.buf),
+                    crate::blp::TextureType::PALETTE => crate::blp::decode::decode_direct_frame(b, frame, &self.buf),
                 }
             }
             AnyImageData::Gif(_) => {
@@ -193,13 +188,15 @@ impl AnyImage {
 pub fn decode_to_rgba(buf: &[u8]) -> Result<DynamicImage, BlpError> {
     // BLP detection first
     if crate::blp::Blp::detect(buf) {
-        let blp = crate::blp::parse_header(buf)?;
-        let decoded = match blp.texture_type {
-            crate::blp::TextureType::JPEG => crate::blp::decode::decode_jpeg_to_mipmaps(&blp, buf, &[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false])?,
-            crate::blp::TextureType::PALETTE => crate::blp::decode::decode_direct_to_mipmaps(&blp, buf, &[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false])?,
-        };
-        if let Some(Some(img)) = decoded.into_iter().next() {
-            return Ok(DynamicImage::ImageRgba8(img));
+        let (blp, frames) = crate::blp::parse_header(buf)?;
+        if let Some(frame) = frames.get(0) {
+            if frame.length > 0 {
+                let img = match blp.texture_type {
+                    crate::blp::TextureType::JPEG => crate::blp::decode::decode_jpeg_frame(&blp, frame, buf)?,
+                    crate::blp::TextureType::PALETTE => crate::blp::decode::decode_direct_frame(&blp, frame, buf)?,
+                };
+                return Ok(DynamicImage::ImageRgba8(img));
+            }
         }
         return Err(BlpError::new("error-blp-no-mipmap"));
     }

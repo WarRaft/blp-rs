@@ -23,7 +23,7 @@ pub struct Ctx {
 }
 
 impl Blp {
-    pub fn encode_blp(&self, quality: u8, mip_visible: &[bool], frame_images: &[Option<image::RgbaImage>]) -> Result<Ctx, BlpError> {
+    pub fn encode_blp(&self, quality: u8, mip_visible: &[bool], frames: &[crate::blp::Frame], frame_images: &[Option<image::RgbaImage>]) -> Result<Ctx, BlpError> {
         use image::RgbaImage;
         use std::{ptr, time::Instant};
 
@@ -36,7 +36,7 @@ impl Blp {
             encode_ms: f64,
         }
 
-        let total = self.frames.len().min(MAX_MIPS);
+        let total = frames.len().min(MAX_MIPS);
         let start_idx = (0..total)
                 .find(|&i| {
                 mip_visible
@@ -49,7 +49,7 @@ impl Blp {
 
         let mut work: Vec<WorkMip> = Vec::with_capacity(total - start_idx);
         for i in start_idx..total {
-            let m = &self.frames[i];
+            let m = &frames[i];
             work.push(WorkMip {
                 w: m.width,
                 h: m.height,
@@ -78,7 +78,7 @@ impl Blp {
 
         let t0 = Instant::now();
 
-        for (i, wm) in work.iter_mut().enumerate() {
+        for (_i, wm) in work.iter_mut().enumerate() {
             if !(wm.vis && wm.img.is_some()) {
                 wm.encoded.clear();
                 wm.encode_ms = 0.0;
