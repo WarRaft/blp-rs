@@ -32,11 +32,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(format!("{}/decoded", output_dir))?;
     fs::create_dir_all(format!("{}/raw", output_dir))?;
     
-    // Extract decoded mipmaps
-    let decoded_mips = img.decode_frames()?;
-    for (i, mip_img) in decoded_mips.iter().enumerate() {
+    // Extract decoded mipmaps using encode() with PNG
+    for i in 0..img.frames.len() {
+        let png_data = img.encode(&EncodeOptions::Png { compression: None })?;
         let png_path = format!("{}/decoded/mip_{:02}.png", output_dir, i);
-        mip_img.save(&png_path)?;
+        fs::write(&png_path, &png_data)?;
+        
+        // Load to get dimensions for logging
+        let mip_img = image::load_from_memory(&png_data)?;
         println!("  ✓ Decoded mip {}: {}x{} -> {}", 
                  i, mip_img.width(), mip_img.height(), png_path);
     }

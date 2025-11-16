@@ -130,14 +130,14 @@ fn rebuild_minimal_jpeg_header(header: &[u8]) -> Result<Vec<u8>, BlpError> {
 // ============================================================================
 
 #[derive(Clone)]
-pub struct Mip {
+pub(crate) struct Mip {
     pub w: u32,
     pub h: u32,
     pub visible: bool,
     pub encode_ms: f64,
 }
 
-pub struct Ctx {
+pub(crate) struct Ctx {
     pub bytes: Vec<u8>,
     pub mips: Vec<Mip>,
     pub has_alpha: bool,
@@ -147,45 +147,8 @@ pub struct Ctx {
 /// Create a Blp header from raw RGBA data.
 ///
 /// This is typically used as the first step in BLP encoding.
-/// Returns a tuple of (Blp, Vec<Frame>) with header information.
-pub fn from_rgba(rgba: &[u8], width: u32, height: u32) -> Result<(Blp, Vec<Frame>), BlpError> {
-    use image::RgbaImage;
-
-    if width == 0 || height == 0 {
-        return Err(BlpError::new("error-image-empty")
-            .with_arg("width", width)
-            .with_arg("height", height));
-    }
-    let expected = (width as usize) * (height as usize) * 4;
-    if rgba.len() != expected {
-        return Err(BlpError::new("error-rgba-buffer-size")
-            .with_arg("expected", expected)
-            .with_arg("actual", rgba.len()));
-    }
-
-    // build RgbaImage (not stored in Blp directly here)
-    let _base_img = RgbaImage::from_raw(width, height, rgba.to_vec()).ok_or_else(|| BlpError::new("error-rgba-image-creation"))?;
-
-    // build power-of-two mip chain
-    let levels = (32 - width.max(height).leading_zeros()) as usize;
-    let mut frames: Vec<Frame> = Vec::with_capacity(MAX_MIPS);
-    let (mut w, mut h) = (width, height);
-    for i in 0..MAX_MIPS {
-        if i < levels {
-            frames.push(Frame { width: w, height: h, offset: 0, length: 0 });
-            w = (w / 2).max(1);
-            h = (h / 2).max(1);
-        } else {
-            frames.push(Frame::default());
-        }
-    }
-
-    let blp = Blp { version: Version::BLP1, texture_type: TextureType::JPEG, compression: 0, alpha_bits: 0, alpha_type: 0, has_mips: 0, width, height, extra: 0, has_mipmaps: 0, holes: 0, header: Frame::default() };
-    Ok((blp, frames))
-}
-
 impl Blp {
-    pub fn encode_blp(&self, quality: u8, mip_visible: &[bool], frames: &[crate::blp::Frame], frame_images: &[Option<image::RgbaImage>]) -> Result<Ctx, BlpError> {
+    pub(crate) fn encode_blp(&self, quality: u8, mip_visible: &[bool], frames: &[Frame], frame_images: &[Option<image::RgbaImage>]) -> Result<Ctx, BlpError> {
         use image::RgbaImage;
         use std::{ptr, time::Instant};
 
@@ -474,8 +437,22 @@ impl Blp {
             rgba
         };
 
-        // Create Blp header structure
-        let (blp, frames) = from_rgba(base_img.as_raw(), target_w, target_h)?;
+        // Create Blp header structure and frames
+        let blp = Blp { version: Version::BLP1, texture_type: TextureType::JPEG, compression: 0, alpha_bits: 0, alpha_type: 0, has_mips: 0, width: target_w, height: target_h, extra: 0, has_mipmaps: 0, holes: 0, header: Frame::default() };
+
+        // Build power-of-two mip chain
+        let levels = (32 - target_w.max(target_h).leading_zeros()) as usize;
+        let mut frames: Vec<Frame> = Vec::with_capacity(MAX_MIPS);
+        let (mut w, mut h) = (target_w, target_h);
+        for i in 0..MAX_MIPS {
+            if i < levels {
+                frames.push(Frame { width: w, height: h, offset: 0, length: 0 });
+                w = (w / 2).max(1);
+                h = (h / 2).max(1);
+            } else {
+                frames.push(Frame::default());
+            }
+        }
 
         // Generate mipmaps
         let mut frame_images: Vec<Option<RgbaImage>> = vec![None; frames.len()];

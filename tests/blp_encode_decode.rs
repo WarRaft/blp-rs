@@ -50,16 +50,17 @@ fn test_png_to_blp_and_extract() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     
-    // Extract decoded mipmaps
-    let decoded_mips = blp_img.decode_frames()?;
-    
-    // Save decoded mipmaps as PNG
+    // Extract decoded mipmaps using encode() with PNG
     fs::create_dir_all("target/decoded_mips")?;
-    for (i, mip_img) in decoded_mips.iter().enumerate() {
+    for i in 0..num_mips {
+        let png_data = blp_img.encode(&EncodeOptions::Png { compression: None })?;
         let png_path = format!("target/decoded_mips/logo_mip{}.png", i);
-        mip_img.save(&png_path)?;
+        fs::write(&png_path, &png_data)?;
+        
+        // Load to get dimensions for logging
+        let img = image::load_from_memory(&png_data)?;
         println!("  Saved decoded mip {}: {} ({}x{})", 
-                 i, png_path, mip_img.width(), mip_img.height());
+                 i, png_path, img.width(), img.height());
     }
     
     // Verify we can decode the main image

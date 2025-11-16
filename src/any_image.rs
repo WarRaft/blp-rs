@@ -1,19 +1,20 @@
 use crate::blp::{self, Blp, Frame};
 use crate::error::error::BlpError;
 use crate::gif::Gif;
+use crate::jpg::Jpg;
 use crate::psd::PsdImage;
 use crate::traits::FormatDetector;
+use image::DynamicImage;
 use image::GenericImageView;
-use image::{DynamicImage, RgbaImage};
 
 /// Configuration for BLP mipmap generation.
-/// 
+///
 /// You can either:
 /// - Specify `mip_count` to generate a fixed number of mipmaps
 /// - Specify `min_size` to generate mipmaps until the smallest dimension reaches this size
 /// - Specify `specific_mips` to explicitly control which mip levels to generate
 /// - Leave all `None` to generate all possible mipmaps
-/// 
+///
 /// Color quantization settings (for palette-based compression):
 /// - `quantize_colors`: Number of colors in palette (1-256, None = no quantization, use JPEG)
 /// - `quantize_dither`: Enable dithering for better quality at lower color counts
@@ -23,7 +24,7 @@ pub struct EncodeMipOptions {
     pub mip_count: Option<usize>,
     /// Minimum dimension (width or height) for mipmap generation
     pub min_size: Option<u32>,
-    /// Explicit control: vec[i] = true means generate mip i
+    /// Explicit control: `vec[i] = true` means generate mip i
     pub specific_mips: Option<Vec<bool>>,
     /// Number of colors for palette quantization (1-256). If set, uses PALETTE texture type.
     /// If None, uses JPEG texture type.
@@ -35,7 +36,7 @@ pub struct EncodeMipOptions {
 impl EncodeMipOptions {
     /// Calculate mipmap visibility mask based on options.
     ///
-    /// Returns a Vec<bool> of length 16 where true means the mipmap should be generated.
+    /// Returns a `Vec<bool>` of length 16 where true means the mipmap should be generated.
     pub fn calculate_mip_visible(&self, width: u32, height: u32) -> Vec<bool> {
         if let Some(ref specific) = self.specific_mips {
             // Direct specification
@@ -142,8 +143,8 @@ impl Default for EncodeOptions {
 /// AnyImage is a convenience wrapper that accepts an in-memory buffer of
 /// unknown image format and exposes a small, user-friendly API.
 ///
-/// Supported inputs: BLP (preferred detection), standard formats supported
-/// by the `image` crate (PNG, JPEG, GIF, ...), and PSD (via `psd` crate).
+/// Supported inputs: BLP (preferred detection), GIF, JPEG, PNG, PSD, and other
+/// formats supported by the `image` crate. Also supports creating from raw RGBA buffers.
 ///
 /// # Examples
 ///
@@ -151,9 +152,15 @@ impl Default for EncodeOptions {
 /// use blp::any_image::{AnyImage, EncodeOptions};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// // Load any image format
+/// // Load any image format from file
 /// let data = std::fs::read("image.blp")?;
 /// let img = AnyImage::from_buffer(&data)?;
+///
+/// // Create from raw RGBA buffer
+/// let width = 256u32;
+/// let height = 256u32;
+/// let rgba_data = vec![255u8; (width * height * 4) as usize]; // White image
+/// let img_from_rgba = AnyImage::from_rgba(rgba_data, width, height)?;
 ///
 /// // Get image dimensions
 /// let (width, height) = img.dimensions();
@@ -184,6 +191,8 @@ pub enum AnyImageData {
     Blp(Blp),      // header-only BLP representation
     Gif(Gif),      // GIF metadata; frames still in AnyImage.frames
     Psd(PsdImage), // PSD metadata; frames still in AnyImage.frames
+    Jpg(Jpg), // JPEG metadata for detailed analysis
+    RgbaBuffer { width: u32, height: u32 }, // Raw RGBA pixel buffer
     Image,         // regular single-frame image — frames[0] contains dims
 }
 
@@ -210,6 +219,11 @@ impl AnyImage {
             return Ok(AnyImage { data: AnyImageData::Gif(gif_meta), buf: buf.to_vec(), frames });
         }
 
+        if Jpg::detect(buf) {
+            let (jpg_meta, frames) = Jpg::parse_header(buf)?;
+            return Ok(AnyImage { data: AnyImageData::Jpg(jpg_meta), buf: buf.to_vec(), frames });
+        }
+
         if PsdImage::detect(buf) {
             let (psd_meta, frames) = PsdImage::parse_header(buf)?;
             return Ok(AnyImage { data: AnyImageData::Psd(psd_meta), buf: buf.to_vec(), frames });
@@ -225,11 +239,44 @@ impl AnyImage {
         Err(BlpError::new("unsupported-format"))
     }
 
+    /// Create AnyImage from raw RGBA pixel buffer.
+    ///
+    /// # Arguments
+    /// * `rgba` - Raw RGBA pixel data (4 bytes per pixel: R, G, B, A)
+    /// * `width` - Image width in pixels
+    /// * `height` - Image height in pixels
+    ///
+    /// # Returns
+    /// `AnyImage` with `AnyImageData::RgbaBuffer` variant
+    pub fn from_rgba(rgba: Vec<u8>, width: u32, height: u32) -> Result<Self, BlpError> {
+        if width == 0 || height == 0 {
+            return Err(BlpError::new("error-image-empty")
+                .with_arg("width", width)
+                .with_arg("height", height));
+        }
+        
+        let expected = (width as usize) * (height as usize) * 4;
+        if rgba.len() != expected {
+            return Err(BlpError::new("error-rgba-buffer-size")
+                .with_arg("expected", expected)
+                .with_arg("actual", rgba.len()));
+        }
+
+        let frame = Frame { width, height, offset: 0, length: rgba.len() };
+        Ok(AnyImage {
+            data: AnyImageData::RgbaBuffer { width, height },
+            buf: rgba,
+            frames: vec![frame],
+        })
+    }
+
     /// Return the image dimensions (width, height) in pixels.
     /// Compatible with the `image` crate's `GenericImageView::dimensions()` API.
     pub fn dimensions(&self) -> (u32, u32) {
         match &self.data {
             AnyImageData::Blp(b) => (b.width, b.height),
+            AnyImageData::Jpg(j) => (j.width, j.height),
+            AnyImageData::RgbaBuffer { width, height } => (*width, *height),
             _ => {
                 let frame = self.frames.get(0);
                 (frame.map(|f| f.width).unwrap_or(0), frame.map(|f| f.height).unwrap_or(0))
@@ -323,57 +370,14 @@ impl AnyImage {
         match self.data {
             AnyImageData::Blp(_) => Blp::into_dynamic(&self.buf),
             AnyImageData::Gif(_) => Gif::into_dynamic(&self.buf),
+            AnyImageData::Jpg(_) => Jpg::into_dynamic(&self.buf),
             AnyImageData::Psd(_) => PsdImage::into_dynamic(&self.buf),
+            AnyImageData::RgbaBuffer { width, height } => {
+                image::RgbaImage::from_raw(width, height, self.buf)
+                    .map(DynamicImage::ImageRgba8)
+                    .ok_or_else(|| BlpError::new("error-rgba-image-creation"))
+            }
             AnyImageData::Image => image::load_from_memory(&self.buf).map_err(|_| BlpError::new("error-image-load")),
-        }
-    }
-
-    /// Produce a Vec of mipmaps (owned `RgbaImage`s).
-    /// For BLP: return the full decoded mip chain. For regular images: generate
-    /// a mip chain by successive downscaling of the base image.
-    /// Decode and return all frames as RgbaImage (for multi-frame or mipmaps).
-    pub fn decode_frames(&self) -> Result<Vec<RgbaImage>, BlpError> {
-        match &self.data {
-            AnyImageData::Blp(_) => blp::open_mipmaps(&self.buf),
-            AnyImageData::Gif(_) => Gif::decode_frames(&self.buf),
-            AnyImageData::Psd(_) | AnyImageData::Image => {
-                let img = image::load_from_memory(&self.buf)?.to_rgba8();
-                Ok(vec![img])
-            }
-        }
-    }
-
-    /// Decode a single frame by index. For BLP, it returns the selected mipmap.
-    pub fn decode_frame(&self, idx: usize) -> Result<RgbaImage, BlpError> {
-        match &self.data {
-            AnyImageData::Blp(b) => {
-                // Use BLP internal decoders targeted to the single index
-                let frame = self
-                    .frames
-                    .get(idx)
-                    .ok_or_else(|| BlpError::new("error-frame-oob").with_arg("idx", idx as u32))?;
-                if frame.length == 0 {
-                    return Err(BlpError::new("error-blp-no-mipmap"));
-                }
-                match b.texture_type {
-                    blp::TextureType::JPEG => blp::decode::decode_jpeg_frame(b, frame, &self.buf),
-                    blp::TextureType::PALETTE => blp::decode::decode_palette_frame(b, frame, &self.buf),
-                }
-            }
-            AnyImageData::Gif(_) => {
-                // use the gif module for GIF frames
-                Gif::decode_frame(&self.buf, idx)
-            }
-            AnyImageData::Psd(_) => {
-                // PSD metadata is stored in AnyImageData::Psd, but decode uses our psd module.
-                // PSD is single-frame: use psd module
-                PsdImage::decode_frame(&self.buf, idx)
-            }
-            AnyImageData::Image => {
-                // single-frame
-                let img = image::load_from_memory(&self.buf)?.to_rgba8();
-                if idx == 0 { Ok(img) } else { Err(BlpError::new("error-frame-oob").with_arg("idx", idx as u32)) }
-            }
         }
     }
 }

@@ -14,7 +14,7 @@ pub struct Gif {
 
 impl Gif {
     /// Parse the GIF into frame metadata (dimensions + placeholder offsets).
-    pub fn parse_header(buf: &[u8]) -> Result<(Self, Vec<Frame>), BlpError> {
+    pub(crate) fn parse_header(buf: &[u8]) -> Result<(Self, Vec<Frame>), BlpError> {
         let decoder = image::codecs::gif::GifDecoder::new(Cursor::new(buf))?;
         let frames = decoder.into_frames();
         let collected = frames.collect_frames()?;
@@ -33,14 +33,14 @@ impl Gif {
     }
 
     /// Fully decode all frames in the GIF payload into owned RGBA images.
-    pub fn decode_frames(buf: &[u8]) -> Result<Vec<RgbaImage>, BlpError> {
+    pub(crate) fn decode_frames(buf: &[u8]) -> Result<Vec<RgbaImage>, BlpError> {
         let decoder = image::codecs::gif::GifDecoder::new(Cursor::new(buf))?;
         let frames = decoder.into_frames().collect_frames()?;
         Ok(frames.into_iter().map(|f| f.into_buffer()).collect())
     }
 
     /// Decode one frame index.
-    pub fn decode_frame(buf: &[u8], idx: usize) -> Result<RgbaImage, BlpError> {
+    pub(crate) fn decode_frame(buf: &[u8], idx: usize) -> Result<RgbaImage, BlpError> {
         let decoder = image::codecs::gif::GifDecoder::new(Cursor::new(buf))?;
         let frames = decoder.into_frames().collect_frames()?;
         if let Some(f) = frames.into_iter().nth(idx) {

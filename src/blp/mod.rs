@@ -1,14 +1,15 @@
 pub mod blp;
-pub use blp::{Blp, Frame, MAX_MIPS, HEADER_SIZE, TextureType, Version};
+pub use blp::{Blp, Frame, TextureType, Version};
 
-pub mod parse;
-pub use parse::{parse_header, header_data, mip_raw};
+// Export constants for internal use
+pub(crate) use blp::{MAX_MIPS, HEADER_SIZE};
 
-pub mod decode;
-pub use decode::{decode_jpeg_frame, decode_palette_frame, open_mipmaps};
+// Internal modules - not part of public API
+pub(crate) mod parse;
+pub(crate) use parse::{parse_header, header_data, mip_raw};
 
-pub mod encode;
-pub use encode::{from_rgba, Ctx, Mip};
+pub(crate) mod decode;
+pub(crate) mod encode;
 
 pub mod options;
 pub use options::{EncodeOptions, MipSelection, RescalePolicy};

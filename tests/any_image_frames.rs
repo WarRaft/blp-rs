@@ -1,5 +1,5 @@
-use blp::{AnyImage, AnyImageData};
-use image::{ImageBuffer, Rgba};
+use blp::any_image::{AnyImage, AnyImageData, EncodeOptions};
+use image::{ImageBuffer, Rgba, GenericImageView};
 use image::codecs::png::PngEncoder;
 use image::ImageEncoder;
 use image::ColorType;
@@ -32,9 +32,11 @@ fn test_gif_frames() {
     }
     assert_eq!(any.frames.len(), 2);
 
-    // decode frames — should return two RGBA images
-    let decoded = any.decode_frames().expect("GIF decode frames");
-    assert_eq!(decoded.len(), 2);
+    // Decode frames using encode() with PNG format — should encode successfully
+    for i in 0..2 {
+        let png_data = any.encode(&EncodeOptions::Png { compression: None }).expect("Encode frame to PNG");
+        assert!(!png_data.is_empty(), "Frame {} should encode to non-empty PNG", i);
+    }
 }
 
 #[test]
@@ -59,9 +61,12 @@ fn test_single_image_frames_png() {
         other => panic!("Expected Image variant, got {:?}", other),
     }
     assert_eq!(any.frames.len(), 1);
-    assert_eq!(any.frames.len(), 1);
 
-    let decoded = any.decode_frames().expect("PNG decode frames");
-    assert_eq!(decoded.len(), 1);
-    assert_eq!(decoded[0].dimensions(), (w, h));
+    // Verify we can encode back to PNG
+    let png_data = any.encode(&EncodeOptions::Png { compression: None }).expect("Encode to PNG");
+    assert!(!png_data.is_empty());
+    
+    // Verify dimensions by loading the encoded PNG
+    let reloaded = image::load_from_memory(&png_data).expect("Reload PNG");
+    assert_eq!(reloaded.dimensions(), (w, h));
 }

@@ -2,10 +2,10 @@ use crate::BlpError;
 use num_enum::TryFromPrimitive;
 
 /// Maximum number of mipmaps supported by the BLP format.
-pub const MAX_MIPS: usize = 16;
+pub(crate) const MAX_MIPS: usize = 16;
 
 /// Size of the BLP header in bytes.
-pub const HEADER_SIZE: u64 = 156;
+pub(crate) const HEADER_SIZE: u64 = 156;
 
 /// BLP file structure containing header information.
 #[derive(Debug, Clone)]

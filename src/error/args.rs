@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::{fmt, fmt::Display, sync::Arc};
 
 #[derive(Clone)]
-pub enum Arg {
+pub(crate) enum Arg {
     Str(Arc<str>),
     Int(i64),
     F64(f64),

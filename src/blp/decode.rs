@@ -6,7 +6,7 @@ use jpeg_decoder::{Decoder, PixelFormat};
 use std::io::Cursor;
 
 /// Decode a single JPEG-based BLP frame.
-pub fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaImage, BlpError> {
+pub(crate) fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaImage, BlpError> {
     // --- Validate header range and slice it out ---
     let h_off = img.header.offset;
     let h_len = img.header.length;
@@ -84,7 +84,7 @@ pub fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaIma
 }
 
 /// Decode a single PALETTE BLP frame.
-pub fn decode_palette_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaImage, BlpError> {
+pub(crate) fn decode_palette_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaImage, BlpError> {
     use std::io::Read;
 
     if img.header.offset + img.header.length > buf.len() {
@@ -166,7 +166,7 @@ pub fn decode_palette_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<Rgba
 ///
 /// Returns a vector of Option<RgbaImage>, where None indicates
 /// the mipmap was not decoded (either missing or mip_visible was false).
-pub fn open_mipmaps_filtered(blp: &Blp, frames: &[Frame], buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
+pub(crate) fn open_mipmaps_filtered(blp: &Blp, frames: &[Frame], buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
     let mut out = Vec::with_capacity(frames.len());
     for (i, frame) in frames.iter().enumerate() {
         let visible = mip_visible
@@ -193,10 +193,10 @@ pub fn open_mipmaps_filtered(blp: &Blp, frames: &[Frame], buf: &[u8], mip_visibl
 ///
 /// This is a convenience function that returns all non-empty mipmaps
 /// as RgbaImage instances (skipping empty frames).
-pub fn open_mipmaps(buf: &[u8]) -> Result<Vec<RgbaImage>, BlpError> {
-    use crate::blp::parse::parse_header;
+pub(crate) fn open_mipmaps(buf: &[u8]) -> Result<Vec<RgbaImage>, BlpError> {
     use crate::blp::MAX_MIPS;
-    
+    use crate::blp::parse::parse_header;
+
     let (img, frames) = parse_header(buf)?;
     let mut out = Vec::new();
     for frame in frames.iter().take(MAX_MIPS) {
@@ -300,7 +300,7 @@ impl Blp {
 impl crate::traits::ImageDecoder for Blp {
     fn into_dynamic(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
         use crate::blp::parse::parse_header;
-        
+
         // Decode only the first mipmap
         let (blp, frames) = parse_header(buf)?;
         if frames.is_empty() {

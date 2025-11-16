@@ -7,7 +7,7 @@ use std::io::Cursor;
 ///
 /// Returns a tuple of (Blp, Vec<Frame>) containing the header information
 /// and frame metadata for all mipmaps.
-pub fn parse_header(buf: &[u8]) -> Result<(Blp, Vec<Frame>), BlpError> {
+pub(crate) fn parse_header(buf: &[u8]) -> Result<(Blp, Vec<Frame>), BlpError> {
     let mut cursor = Cursor::new(buf);
 
     let version_raw = cursor.read_u32::<BigEndian>()?;
@@ -115,7 +115,7 @@ pub fn parse_header(buf: &[u8]) -> Result<(Blp, Vec<Frame>), BlpError> {
 ///
 /// For JPEG textures, returns the shared JPEG header.
 /// For palette textures, returns the 256-color RGBA palette (1024 bytes).
-pub fn header_data_with_blp<'a>(blp: &Blp, buf: &'a [u8]) -> Result<&'a [u8], BlpError> {
+pub(crate) fn header_data_with_blp<'a>(blp: &Blp, buf: &'a [u8]) -> Result<&'a [u8], BlpError> {
     let off = blp.header.offset;
     let len = blp.header.length;
     if off.checked_add(len).is_none() || (off + len) > buf.len() {
@@ -129,7 +129,7 @@ pub fn header_data_with_blp<'a>(blp: &Blp, buf: &'a [u8]) -> Result<&'a [u8], Bl
 /// This is a convenience function that parses the header first.
 /// For JPEG textures: returns shared JPEG header.
 /// For PALETTE textures: returns palette bytes (256 RGBA entries, 1024 bytes total).
-pub fn header_data(buf: &[u8]) -> Option<&[u8]> {
+pub(crate) fn header_data(buf: &[u8]) -> Option<&[u8]> {
     if let Ok((h, _frames)) = parse_header(buf) {
         let off = h.header.offset;
         let len = h.header.length;
@@ -144,7 +144,7 @@ pub fn header_data(buf: &[u8]) -> Option<&[u8]> {
 ///
 /// For JPEG textures, this is the JPEG frame data (without the shared header).
 /// For palette textures, this is the indexed pixel data.
-pub fn mip_raw_with_frame<'a>(frame: &Frame, buf: &'a [u8]) -> Result<&'a [u8], BlpError> {
+pub(crate) fn mip_raw_with_frame<'a>(frame: &Frame, buf: &'a [u8]) -> Result<&'a [u8], BlpError> {
     let off = frame.offset;
     let len = frame.length;
     if len == 0 {
@@ -157,7 +157,7 @@ pub fn mip_raw_with_frame<'a>(frame: &Frame, buf: &'a [u8]) -> Result<&'a [u8], 
 }
 
 /// Return the raw payload for a given mip index (no decoding).
-pub fn mip_raw(buf: &[u8], mip_index: usize) -> Option<&[u8]> {
+pub(crate) fn mip_raw(buf: &[u8], mip_index: usize) -> Option<&[u8]> {
     if let Ok((_h, frames)) = parse_header(buf) {
         if mip_index >= frames.len() {
             return None;
