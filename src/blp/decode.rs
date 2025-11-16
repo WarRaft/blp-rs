@@ -1,4 +1,4 @@
-use crate::blp::{Blp, Frame};
+use crate::blp::{Blp, Frame, TextureType};
 use crate::error::error::BlpError;
 use byteorder::{LittleEndian, ReadBytesExt};
 use image::RgbaImage;
@@ -160,4 +160,157 @@ pub fn decode_palette_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<Rgba
     }
 
     Ok(out_img)
+}
+
+/// Open and decode all mipmaps from a BLP file (with visibility filter).
+///
+/// Returns a vector of Option<RgbaImage>, where None indicates
+/// the mipmap was not decoded (either missing or mip_visible was false).
+pub fn open_mipmaps_filtered(blp: &Blp, frames: &[Frame], buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
+    let mut out = Vec::with_capacity(frames.len());
+    for (i, frame) in frames.iter().enumerate() {
+        let visible = mip_visible
+            .get(i)
+            .copied()
+            .unwrap_or(true);
+        if !visible || frame.length == 0 {
+            out.push(None);
+            continue;
+        }
+        let result = match blp.texture_type {
+            TextureType::JPEG => decode_jpeg_frame(blp, frame, buf),
+            TextureType::PALETTE => decode_palette_frame(blp, frame, buf),
+        };
+        match result {
+            Ok(img) => out.push(Some(img)),
+            Err(_) => out.push(None),
+        }
+    }
+    Ok(out)
+}
+
+/// Open and decode all mipmaps from a BLP buffer.
+///
+/// This is a convenience function that returns all non-empty mipmaps
+/// as RgbaImage instances (skipping empty frames).
+pub fn open_mipmaps(buf: &[u8]) -> Result<Vec<RgbaImage>, BlpError> {
+    use crate::blp::parse::parse_header;
+    use crate::blp::MAX_MIPS;
+    
+    let (img, frames) = parse_header(buf)?;
+    let mut out = Vec::new();
+    for frame in frames.iter().take(MAX_MIPS) {
+        if frame.length == 0 {
+            continue;
+        }
+        let rgba = match img.texture_type {
+            TextureType::JPEG => decode_jpeg_frame(&img, frame, buf)?,
+            TextureType::PALETTE => decode_palette_frame(&img, frame, buf)?,
+        };
+        out.push(rgba);
+    }
+    Ok(out)
+}
+
+impl Blp {
+    /// Decode an external image (PNG/JPG/PSD/etc.) into power-of-two mip images
+    /// and fill `frames[*]` dimensions accordingly.
+    pub fn decode_image(&self, frames: &mut [Frame], buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
+        // --- Decode source into RGBA8 ---
+        use crate::traits::{FormatDetector, ImageDecoder};
+
+        let src = if Blp::detect(buf) {
+            Blp::into_dynamic(buf)?
+        } else if crate::psd::PsdImage::detect(buf) {
+            crate::psd::PsdImage::into_dynamic(buf)?
+        } else {
+            image::load_from_memory(buf).map_err(|_| BlpError::new("error-image-load"))?
+        };
+
+        let src = src.to_rgba8();
+
+        // Target size (at least 1×1).
+        let (tw, th) = (self.width.max(1), self.height.max(1));
+        let (sw, sh) = src.dimensions();
+
+        if sw == 0 || sh == 0 {
+            return Err(BlpError::new("error-image-empty")
+                .with_arg("width", sw)
+                .with_arg("height", sh));
+        }
+
+        // --- (1) cover-scale: choose the larger scale so the image covers the target area ---
+        let sx = tw as f32 / sw as f32;
+        let sy = th as f32 / sh as f32;
+        let s = sx.max(sy);
+        let rw = (sw as f32 * s).ceil() as u32;
+        let rh = (sh as f32 * s).ceil() as u32;
+        let resized = image::imageops::resize(&src, rw, rh, image::imageops::FilterType::Lanczos3);
+
+        // --- (2) center-crop to exactly (tw, th) ---
+        let cx = ((rw.saturating_sub(tw)) / 2).min(rw.saturating_sub(tw));
+        let cy = ((rh.saturating_sub(th)) / 2).min(rh.saturating_sub(th));
+        let base = image::imageops::crop_imm(&resized, cx, cy, tw, th).to_image();
+
+        // --- (3) build mip chain, honoring `mip_visible` ---
+        let mut prev = base;
+        let (mut w, mut h) = (tw, th);
+
+        let mut out: Vec<Option<RgbaImage>> = Vec::with_capacity(frames.len());
+        for i in 0..frames.len() {
+            // Record dimensions for this mip (even if we skip pixels).
+            frames[i].width = w;
+            frames[i].height = h;
+
+            // Visibility gate: missing entry → treated as `true`.
+            let visible = mip_visible
+                .get(i)
+                .copied()
+                .unwrap_or(true);
+            if visible {
+                out.push(Some(prev.clone()));
+            } else {
+                out.push(None);
+            }
+
+            // Stop when we reached 1×1.
+            if w == 1 && h == 1 {
+                break;
+            }
+
+            // Next mip level dims: halve each dimension, clamp to ≥1.
+            let next_w = (w / 2).max(1);
+            let next_h = (h / 2).max(1);
+
+            // Downscale current level into the next.
+            let next_img = image::imageops::resize(&prev, next_w, next_h, image::imageops::FilterType::Lanczos3);
+
+            prev = next_img;
+            w = next_w;
+            h = next_h;
+        }
+
+        while out.len() < frames.len() {
+            out.push(None);
+        }
+        Ok(out)
+    }
+}
+
+impl crate::traits::ImageDecoder for Blp {
+    fn into_dynamic(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
+        use crate::blp::parse::parse_header;
+        
+        // Decode only the first mipmap
+        let (blp, frames) = parse_header(buf)?;
+        if frames.is_empty() {
+            return Err(BlpError::new("blp.no-frames"));
+        }
+        let frame = &frames[0];
+        let img = match blp.texture_type {
+            TextureType::JPEG => decode_jpeg_frame(&blp, frame, buf)?,
+            TextureType::PALETTE => decode_palette_frame(&blp, frame, buf)?,
+        };
+        Ok(image::DynamicImage::ImageRgba8(img))
+    }
 }

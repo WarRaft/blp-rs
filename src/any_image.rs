@@ -30,7 +30,45 @@ pub struct EncodeMipOptions {
     pub quantize_colors: Option<u8>,
     /// Enable dithering when quantizing colors (reduces banding artifacts)
     pub quantize_dither: bool,
-}/// Encoding options for AnyImage export.
+}
+
+impl EncodeMipOptions {
+    /// Calculate mipmap visibility mask based on options.
+    ///
+    /// Returns a Vec<bool> of length 16 where true means the mipmap should be generated.
+    pub fn calculate_mip_visible(&self, width: u32, height: u32) -> Vec<bool> {
+        if let Some(ref specific) = self.specific_mips {
+            // Direct specification
+            return specific.clone();
+        }
+
+        // Calculate based on mip_count or min_size
+        let max_mips = (32 - width.max(height).leading_zeros()) as usize;
+        let mut visible = vec![false; 16];
+
+        let mut w = width;
+        let mut h = height;
+        for i in 0..max_mips.min(16) {
+            let should_generate = if let Some(min_sz) = self.min_size {
+                w.min(h) >= min_sz
+            } else if let Some(count) = self.mip_count {
+                i < count
+            } else {
+                true // Generate all
+            };
+
+            visible[i] = should_generate;
+            if !should_generate {
+                break;
+            }
+            w = (w / 2).max(1);
+            h = (h / 2).max(1);
+        }
+        visible
+    }
+}
+
+/// Encoding options for AnyImage export.
 ///
 /// # Examples
 ///
@@ -264,35 +302,8 @@ impl AnyImage {
 
                 // Calculate mip visibility mask based on options
                 let mip_visible = if let Some(opts) = mip_options {
-                    if let Some(ref specific) = opts.specific_mips {
-                        // Direct specification
-                        specific.clone()
-                    } else {
-                        // Calculate based on mip_count or min_size
-                        let (width, height) = base_img.dimensions();
-                        let max_mips = (32 - width.max(height).leading_zeros()) as usize;
-                        let mut visible = vec![false; 16];
-
-                        let mut w = width;
-                        let mut h = height;
-                        for i in 0..max_mips.min(16) {
-                            let should_generate = if let Some(min_sz) = opts.min_size {
-                                w.min(h) >= min_sz
-                            } else if let Some(count) = opts.mip_count {
-                                i < count
-                            } else {
-                                true // Generate all
-                            };
-
-                            visible[i] = should_generate;
-                            if !should_generate {
-                                break;
-                            }
-                            w = (w / 2).max(1);
-                            h = (h / 2).max(1);
-                        }
-                        visible
-                    }
+                    let (width, height) = base_img.dimensions();
+                    opts.calculate_mip_visible(width, height)
                 } else {
                     // Default: generate all possible mipmaps
                     vec![true; 16]
