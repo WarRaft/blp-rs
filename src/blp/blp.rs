@@ -335,7 +335,7 @@ impl Blp {
     /// and fill `frames[*]` dimensions accordingly.
     pub fn decode_image(&self, frames: &mut [Frame], buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
         // --- Decode source into RGBA8 ---
-        let src = crate::any_image::decode_to_rgba(buf)?;
+        let src = crate::blp::decode_to_rgba(buf)?;
         let src = src.to_rgba8();
 
         // Target size (at least 1×1).
@@ -402,10 +402,9 @@ impl Blp {
         while out.len() < frames.len() { out.push(None); }
         Ok(out)
     }
-    // Export is implemented in `src/blp/export.rs` to keep helpers together.
 }
 
-impl crate::format_detector::FormatDetector for Blp {
+impl crate::traits::FormatDetector for Blp {
     fn detect(buf: &[u8]) -> bool {
         buf.len() >= 3 && &buf[0..3] == b"BLP"
     }
@@ -415,7 +414,7 @@ impl crate::format_detector::FormatDetector for Blp {
     }
 }
 
-impl crate::format_detector::ImageDecoder for Blp {
+impl crate::traits::ImageDecoder for Blp {
     fn to_dynamic(buf: &[u8]) -> Result<crate::image::DynamicImage, crate::error::error::BlpError> {
         // Decode only the first mipmap
         let (blp, frames) = parse_header(buf)?;

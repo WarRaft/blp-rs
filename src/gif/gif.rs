@@ -2,7 +2,7 @@ use crate::error::error::BlpError;
 use crate::blp::Frame;
 use image::{RgbaImage, AnimationDecoder};
 use std::io::Cursor;
-use crate::format_detector::FormatDetector;
+use crate::traits::FormatDetector;
 
 /// Small header-only structure for GIFs. GIFs are multi-frame, so we produce
 /// one `Frame` metadata per frame to align with the rest of the codebase.
@@ -61,7 +61,7 @@ impl FormatDetector for Gif {
     }
 }
 
-impl crate::format_detector::ImageDecoder for Gif {
+impl crate::traits::ImageDecoder for Gif {
     fn to_dynamic(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
         // Return the first frame as DynamicImage
         let frames = Gif::decode_frames(buf)?;

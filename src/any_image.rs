@@ -1,6 +1,6 @@
 use crate::blp::{self, Blp, Frame};
 use crate::error::error::BlpError;
-use crate::format_detector::FormatDetector;
+use crate::traits::FormatDetector;
 use crate::gif::Gif;
 use crate::psd::PsdImage;
 use image::GenericImageView;
@@ -171,8 +171,8 @@ pub enum AnyImageData {
 /// Trait to detect & parse headers cheaply for supported formats.
 /// Implementations should be light and must not store the payload (heavy bytes)
 /// — only metadata and pointers into `AnyImage.frames` if needed.
-// FormatDetector trait lives in `src/format_detector.rs` to avoid circular deps.
-// `FormatDetector` now lives in `src/format_detector.rs` and is used by
+// FormatDetector trait lives in `src/traits.rs` to avoid circular deps.
+// `FormatDetector` now lives in `src/traits.rs` and is used by
 // the modules (`blp`, `gif`, `psd`) to implement cheap detection + header parsing.
 
 impl AnyImage {
@@ -291,7 +291,7 @@ impl AnyImage {
                 }
 
                 // Generate BLP from any image format
-                use crate::format_detector::ImageDecoder;
+                use crate::traits::ImageDecoder;
                 let base_img = match &self.data {
                     AnyImageData::Blp(_) => Blp::to_dynamic(&self.buf)?,
                     AnyImageData::Gif(_) => Gif::to_dynamic(&self.buf)?,
@@ -350,7 +350,7 @@ impl AnyImage {
     /// (decoded on demand). Consumes self.
     /// Decode and return the first frame as DynamicImage.
     pub fn into_dynamic(self) -> Result<DynamicImage, BlpError> {
-        use crate::format_detector::ImageDecoder;
+        use crate::traits::ImageDecoder;
         match self.data {
             AnyImageData::Blp(_) => Blp::to_dynamic(&self.buf),
             AnyImageData::Gif(_) => Gif::to_dynamic(&self.buf),
@@ -433,31 +433,4 @@ impl AnyImage {
             _ => None,
         }
     }
-}
-
-/// Decode any supported buffer into a `DynamicImage`.
-///
-/// Attempts to decode BLP first, then PSD, then falls back to standard image formats.
-pub fn decode_to_rgba(buf: &[u8]) -> Result<DynamicImage, BlpError> {
-    // BLP detection first
-    if Blp::detect(buf) {
-        let (blp, frames) = blp::parse_header(buf)?;
-        if let Some(frame) = frames.get(0) {
-            if frame.length > 0 {
-                let img = match blp.texture_type {
-                    blp::TextureType::JPEG => blp::decode::decode_jpeg_frame(&blp, frame, buf)?,
-                    blp::TextureType::PALETTE => blp::decode::decode_palette_frame(&blp, frame, buf)?,
-                };
-                return Ok(DynamicImage::ImageRgba8(img));
-            }
-        }
-        return Err(BlpError::new("error-blp-no-mipmap"));
-    }
-
-    // PSD special-case
-    if PsdImage::detect(buf) {
-        return PsdImage::decode_as_dynamic(buf);
-    }
-
-    image::load_from_memory(buf).map_err(|_| BlpError::new("error-image-load"))
 }

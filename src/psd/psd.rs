@@ -2,7 +2,7 @@ use crate::error::error::BlpError;
 use crate::blp::Frame;
 use image::RgbaImage;
 use psd::Psd;
-use crate::format_detector::FormatDetector;
+use crate::traits::FormatDetector;
 
 /// PSD wrapper for our codebase. PSD is single-frame; we expose a Frame chain
 /// with one frame (base) so all formats follow the "frames everywhere"
@@ -55,7 +55,7 @@ impl FormatDetector for PsdImage {
     }
 }
 
-impl crate::format_detector::ImageDecoder for PsdImage {
+impl crate::traits::ImageDecoder for PsdImage {
     fn to_dynamic(buf: &[u8]) -> Result<image::DynamicImage, BlpError> {
         PsdImage::decode_as_dynamic(buf)
     }

@@ -12,4 +12,5 @@ pub mod options;
 pub use options::{EncodeOptions, MipSelection, RescalePolicy};
 pub mod decode;
 pub use decode::{decode_jpeg_frame, decode_palette_frame};
-pub mod export;
+pub mod helpers;
+pub use helpers::decode_to_rgba;

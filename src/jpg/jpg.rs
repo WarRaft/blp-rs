@@ -47,7 +47,8 @@ impl Jpg {
                     enc.encode(rgb.as_raw(), rgb.width(), rgb.height(), image::ColorType::Rgb8.into())?;
                     Ok(out)
                 } else {
-                    let dynimg = crate::any_image::decode_to_rgba(buf)?;
+                    // No quality arg — detect the external format and convert.
+                    let dynimg = crate::blp::decode_to_rgba(buf)?;
                     let img = dynimg.to_rgba8();
                     let mut out = Vec::new();
                     let rgb = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();
