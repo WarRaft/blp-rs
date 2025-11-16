@@ -193,7 +193,7 @@ pub fn from_rgba(rgba: &[u8], width: u32, height: u32) -> Result<(Blp, Vec<Frame
 }
 
 /// Return header data (JPEG header for JPEG type, palette for PALETTE type).
-/// 
+///
 /// For JPEG textures: returns shared JPEG header.
 /// For PALETTE textures: returns palette bytes (256 RGBA entries, 1024 bytes total).
 pub fn header_data(buf: &[u8]) -> Option<&[u8]> {
@@ -205,18 +205,6 @@ pub fn header_data(buf: &[u8]) -> Option<&[u8]> {
         }
     }
     None
-}
-
-/// Deprecated: Use `header_data` instead.
-#[deprecated(since = "1.1.0", note = "Use `header_data` instead")]
-pub fn shared_jpeg_header(buf: &[u8]) -> Option<&[u8]> {
-    header_data(buf)
-}
-
-/// Deprecated: Use `header_data` instead.
-#[deprecated(since = "1.1.0", note = "Use `header_data` instead")]
-pub fn palette_bytes(buf: &[u8]) -> Option<&[u8]> {
-    header_data(buf)
 }
 
 /// Return the raw payload for a given mip index (no decoding).
@@ -235,54 +223,6 @@ pub fn mip_raw(buf: &[u8], mip_index: usize) -> Option<&[u8]> {
         return Some(&buf[f.offset..f.offset + f.length]);
     }
     None
-}
-
-/// Lightweight metadata for a mip level (no pixel materialization)
-#[derive(Debug, Clone)]
-pub struct MipInfo {
-    pub index: usize,
-    pub width: u32,
-    pub height: u32,
-    pub offset: usize,
-    pub length: usize,
-}
-
-/// Metadata summary for a BLP buffer. Does not allocate pixel images.
-#[derive(Debug, Clone)]
-pub struct BlpMeta {
-    pub version: Version,
-    pub texture_type: TextureType,
-    pub compression: u8,
-    pub alpha_bits: u32,
-    pub alpha_type: u8,
-    pub has_mips: u8,
-    pub width: u32,
-    pub height: u32,
-    pub extra: u32,
-    pub has_mipmaps: u32,
-    pub mipmaps: Vec<MipInfo>,
-    pub holes: usize,
-    pub header_offset: usize,
-    pub header_length: usize,
-}
-
-/// Inspect raw BLP bytes and return metadata without decoding pixel data.
-/// Returns an error if buffer is not a BLP or is truncated/corrupted.
-pub fn inspect_buf(buf: &[u8]) -> Result<BlpMeta, BlpError> {
-    let (h, frames) = parse_header(buf)?;
-
-    let mut mipinfos = Vec::with_capacity(frames.len());
-    for (i, f) in frames.iter().enumerate() {
-        mipinfos.push(MipInfo { index: i, width: f.width, height: f.height, offset: f.offset, length: f.length });
-    }
-
-    Ok(BlpMeta { version: h.version, texture_type: h.texture_type, compression: h.compression, alpha_bits: h.alpha_bits, alpha_type: h.alpha_type, has_mips: h.has_mips, width: h.width, height: h.height, extra: h.extra, has_mipmaps: h.has_mipmaps, mipmaps: mipinfos, holes: h.holes, header_offset: h.header.offset, header_length: h.header.length })
-}
-
-/// Inspect image bytes and return its declared pixel dimensions without full materialization.
-pub fn inspect_image_dimensions(buf: &[u8]) -> Result<(u32, u32), BlpError> {
-    let (h, _frames) = parse_header(buf)?;
-    Ok((h.width, h.height))
 }
 
 /// For BLP files return all mipmaps as owned `RgbaImage`s.
@@ -331,7 +271,7 @@ impl Blp {
     pub fn decode_image(&self, frames: &mut [Frame], buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
         // --- Decode source into RGBA8 ---
         use crate::traits::{FormatDetector, ImageDecoder};
-        
+
         let src = if Blp::detect(buf) {
             Blp::into_dynamic(buf)?
         } else if crate::psd::PsdImage::detect(buf) {
@@ -339,7 +279,7 @@ impl Blp {
         } else {
             image::load_from_memory(buf).map_err(|_| BlpError::new("error-image-load"))?
         };
-        
+
         let src = src.to_rgba8();
 
         // Target size (at least 1×1).
@@ -410,20 +350,18 @@ impl Blp {
     }
 
     /// Encode a DynamicImage to BLP format with mipmaps.
-    /// 
+    ///
     /// This static method handles the complete BLP encoding pipeline:
     /// 1. Converts source image to RGBA
     /// 2. Scales to power-of-two dimensions (upscaling if needed)
     /// 3. Generates mipmaps according to mip_visible mask
     /// 4. Encodes to BLP with specified quality
-    pub fn encode_from_image(
-        source: &image::DynamicImage,
-        quality: u8,
-        mip_visible: &[bool],
-    ) -> Result<Vec<u8>, BlpError> {
+    pub fn encode_from_image(source: &image::DynamicImage, quality: u8, mip_visible: &[bool]) -> Result<Vec<u8>, BlpError> {
         /// Round up to the nearest power of two.
         fn next_pow2(v: u32) -> u32 {
-            if v == 0 { return 1; }
+            if v == 0 {
+                return 1;
+            }
             let mut n = v - 1;
             n |= n >> 1;
             n |= n >> 2;
@@ -436,63 +374,53 @@ impl Blp {
         // Convert to RGBA
         let rgba = source.to_rgba8();
         let (src_w, src_h) = rgba.dimensions();
-        
+
         // Calculate target power-of-two dimensions
         let target_w = next_pow2(src_w);
         let target_h = next_pow2(src_h);
-        
+
         // Resize to power-of-two if needed
         let base_img = if src_w != target_w || src_h != target_h {
-            image::imageops::resize(
-                &rgba,
-                target_w,
-                target_h,
-                image::imageops::FilterType::Lanczos3
-            )
+            image::imageops::resize(&rgba, target_w, target_h, image::imageops::FilterType::Lanczos3)
         } else {
             rgba
         };
-        
+
         // Create Blp header structure
-        let (blp, frames) = from_rgba(
-            base_img.as_raw(),
-            target_w,
-            target_h
-        )?;
-        
+        let (blp, frames) = from_rgba(base_img.as_raw(), target_w, target_h)?;
+
         // Generate mipmaps
         let mut frame_images: Vec<Option<RgbaImage>> = vec![None; frames.len()];
         frame_images[0] = Some(base_img.clone());
-        
+
         let mut prev = base_img;
         let mut w = target_w;
         let mut h = target_h;
-        
+
         for i in 1..frames.len() {
-            if !mip_visible.get(i).copied().unwrap_or(true) {
+            if !mip_visible
+                .get(i)
+                .copied()
+                .unwrap_or(true)
+            {
                 break;
             }
-            
+
             let next_w = (w / 2).max(1);
             let next_h = (h / 2).max(1);
-            
-            let next_img = image::imageops::resize(
-                &prev,
-                next_w,
-                next_h,
-                image::imageops::FilterType::Lanczos3
-            );
-            
+
+            let next_img = image::imageops::resize(&prev, next_w, next_h, image::imageops::FilterType::Lanczos3);
+
             frame_images[i] = Some(next_img.clone());
             prev = next_img;
             w = next_w;
             h = next_h;
-            
+
             if w == 1 && h == 1 {
                 break;
             }
         }
-        
+
         // Encode to BLP
         let ctx = blp.encode_blp(quality, mip_visible, &frames, &frame_images)?;
         Ok(ctx.bytes)
