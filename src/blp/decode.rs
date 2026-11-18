@@ -6,7 +6,7 @@ use jpeg_decoder::{Decoder, PixelFormat};
 use std::io::Cursor;
 
 /// Decode a single JPEG-based BLP frame.
-pub(crate) fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaImage, BlpError> {
+pub fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaImage, BlpError> {
     // --- Validate header range and slice it out ---
     let h_off = img.header.offset;
     let h_len = img.header.length;
@@ -15,8 +15,6 @@ pub(crate) fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<
     }
     let header_bytes = &buf[h_off..h_off + h_len];
 
-    // If alpha_bits == 0 we force opaque alpha channel when reconstructing RGBA.
-    let force_opaque = img.alpha_bits == 0;
 
     let off = frame.offset;
     let len = frame.length;
@@ -52,7 +50,7 @@ pub(crate) fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<
                 let m = pixels[idx + 1];
                 let y = pixels[idx + 2];
                 let k = pixels[idx + 3];
-                let a = if force_opaque { 255 } else { 255u8.saturating_sub(k) };
+                let a = 255u8.saturating_sub(k);
                 *px = image::Rgba([255u8.saturating_sub(y), 255u8.saturating_sub(m), 255u8.saturating_sub(c), a]);
             }
         }
@@ -84,7 +82,7 @@ pub(crate) fn decode_jpeg_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<
 }
 
 /// Decode a single PALETTE BLP frame.
-pub(crate) fn decode_palette_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaImage, BlpError> {
+pub fn decode_palette_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Result<RgbaImage, BlpError> {
     use std::io::Read;
 
     if img.header.offset + img.header.length > buf.len() {
@@ -166,7 +164,7 @@ pub(crate) fn decode_palette_frame(img: &Blp, frame: &Frame, buf: &[u8]) -> Resu
 ///
 /// Returns a vector of Option<RgbaImage>, where None indicates
 /// the mipmap was not decoded (either missing or mip_visible was false).
-pub(crate) fn open_mipmaps_filtered(blp: &Blp, frames: &[Frame], buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
+pub fn open_mipmaps_filtered(blp: &Blp, frames: &[Frame], buf: &[u8], mip_visible: &[bool]) -> Result<Vec<Option<RgbaImage>>, BlpError> {
     let mut out = Vec::with_capacity(frames.len());
     for (i, frame) in frames.iter().enumerate() {
         let visible = mip_visible
@@ -193,7 +191,7 @@ pub(crate) fn open_mipmaps_filtered(blp: &Blp, frames: &[Frame], buf: &[u8], mip
 ///
 /// This is a convenience function that returns all non-empty mipmaps
 /// as RgbaImage instances (skipping empty frames).
-pub(crate) fn open_mipmaps(buf: &[u8]) -> Result<Vec<RgbaImage>, BlpError> {
+pub fn open_mipmaps(buf: &[u8]) -> Result<Vec<RgbaImage>, BlpError> {
     use crate::blp::MAX_MIPS;
     use crate::blp::parse::parse_header;
 

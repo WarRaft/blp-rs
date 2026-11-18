@@ -8,7 +8,7 @@ pub(crate) use blp::{MAX_MIPS, HEADER_SIZE};
 pub(crate) mod parse;
 pub(crate) use parse::{parse_header, header_data, mip_raw};
 
-pub(crate) mod decode;
+pub mod decode;
 pub(crate) mod encode;
 
 pub mod options;

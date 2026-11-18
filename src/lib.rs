@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 pub mod any_image;
 pub mod blp;
 pub mod error;
