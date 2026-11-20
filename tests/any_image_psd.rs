@@ -1,3 +1,5 @@
+#![cfg(feature = "psd")]
+
 use blp::{AnyImage, AnyImageData};
 use std::fs::read;
 
@@ -13,7 +15,7 @@ fn test_psd_detect_and_frames() {
     // Detection must succeed
     let any = AnyImage::from_buffer(&buf).expect("AnyImage should parse PSD");
     match &any.data {
-        AnyImageData::Psd(_) => {},
+        AnyImageData::Psd(_) => {}
         other => panic!("Expected PSD variant, got {:?}", other),
     }
 

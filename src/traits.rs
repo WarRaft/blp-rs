@@ -1,25 +1,22 @@
-use crate::error::error::BlpError;
-use crate::blp::Frame;
+use crate::{BlpError, Frame};
 use image::DynamicImage;
 
-/// Trait to detect & parse headers cheaply for supported formats.
-/// Implementations should be light and must not store the full payload (heavy bytes)
-/// — only metadata and pointers into `AnyImage.frames` if needed.
+/// Cheap detection and header parsing of an input format.
+///
+/// Implementations keep only metadata: what [`parse_header`](Self::parse_header)
+/// returns points into the buffer, it doesn't copy pixels.
 pub trait FormatDetector: Sized {
-    /// Cheap detection that must not allocate but look for format signatures.
+    /// Does the buffer start with this format's signature? Never allocates.
     fn detect(buf: &[u8]) -> bool;
 
-    /// Parse header and return a format-specific metadata container along with frames.
+    /// The format's metadata and its frames (mips for BLP, animation
+    /// frames for GIF, one frame otherwise).
     fn parse_header(buf: &[u8]) -> Result<(Self, Vec<Frame>), BlpError>;
 }
 
-/// Trait for decoding format-specific data to DynamicImage.
-/// Each format implementation provides its own logic for converting to a single image.
+/// Decoding an input format to a single image.
 pub trait ImageDecoder {
-    /// Decode the buffer into a DynamicImage.
-    /// For BLP: decodes the first mipmap.
-    /// For PSD: composites all layers.
-    /// For GIF: returns the first frame.
-    /// For standard images: returns the decoded image.
+    /// The image a viewer shows first: BLP's base mip, a GIF's first
+    /// frame, a PSD's composite, the image itself otherwise.
     fn into_dynamic(buf: &[u8]) -> Result<DynamicImage, BlpError>;
 }

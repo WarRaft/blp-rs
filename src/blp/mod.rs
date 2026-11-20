@@ -1,15 +1,15 @@
-pub mod blp;
-pub use blp::{Blp, Frame, TextureType, Version};
+//! The BLP format: [`Blp::parse`] reads the header, [`Blp::decode`] a mip,
+//! [`Blp::encode_from_rgba`] (feature `encode`) writes a BLP1 JPEG
+//! texture.
 
-// Export constants for internal use
-pub(crate) use blp::{MAX_MIPS, HEADER_SIZE};
+#[allow(clippy::module_inception)]
+mod blp;
+mod decode;
+#[cfg(feature = "encode")]
+mod encode;
+mod parse;
 
-// Internal modules - not part of public API
-pub(crate) mod parse;
-pub(crate) use parse::{parse_header, header_data, mip_raw};
+pub use blp::{Blp, Encoding, Frame, TextureType, Version};
 
-pub mod decode;
-pub(crate) mod encode;
-
-pub mod options;
-pub use options::{EncodeOptions, MipSelection, RescalePolicy};
+/// Mip slots in a BLP1/BLP2 header.
+pub(crate) const MAX_MIPS: usize = 16;
